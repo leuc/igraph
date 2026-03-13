@@ -73,6 +73,20 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_kamada_kawai(const igraph_t *graph, i
                                              const igraph_vector_t *minx, const igraph_vector_t *maxx,
                                              const igraph_vector_t *miny, const igraph_vector_t *maxy);
 
+IGRAPH_EXPORT igraph_error_t igraph_layout_yifan_hu(const igraph_t *graph,
+                                         igraph_matrix_t *res,
+                                         igraph_bool_t use_seed,
+                                         igraph_int_t niter,
+                                         igraph_real_t relative_strength,
+                                         igraph_real_t step_ratio,
+                                         igraph_real_t convergence_threshold,
+                                         igraph_layout_grid_t grid,
+                                         const igraph_vector_t *weights,
+                                         const igraph_vector_t *minx,
+                                         const igraph_vector_t *maxx,
+                                         const igraph_vector_t *miny,
+                                         const igraph_vector_t *maxy);
+
 IGRAPH_EXPORT igraph_error_t igraph_layout_lgl(const igraph_t *graph, igraph_matrix_t *res,
                                     igraph_int_t maxiter, igraph_real_t maxdelta,
                                     igraph_real_t area, igraph_real_t coolexp,

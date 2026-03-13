@@ -1491,6 +1491,15 @@ igraph_layout_kamada_kawai:
         OPTIONAL VECTOR miny, OPTIONAL VECTOR maxy
     DEPS: weights ON graph
 
+igraph_layout_yifan_hu:
+    PARAMS: |-
+        GRAPH graph, OUT MATRIX coords, BOOLEAN use_seed=False, INTEGER niter=500,
+        REAL relative_strength=0.2, REAL step_ratio=0.95, REAL convergence_threshold=0.0001,
+        LAYOUT_GRID grid=AUTO, OPTIONAL EDGE_WEIGHTS weights,
+        OPTIONAL VECTOR minx, OPTIONAL VECTOR maxx,
+        OPTIONAL VECTOR miny, OPTIONAL VECTOR maxy
+    DEPS: weights ON graph
+
 igraph_layout_lgl:
     PARAMS: |-
         GRAPH graph, OUT MATRIX res, INTEGER maxiter=150, REAL maxdelta=VCOUNT(graph),

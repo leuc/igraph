@@ -220,6 +220,7 @@ add_library(
   layout/drl/drl_layout.cpp
   layout/drl/drl_layout_3d.cpp
   layout/fruchterman_reingold.c
+  layout/yifan_hu.c
   layout/gem.c
   layout/graphopt.c
   layout/kamada_kawai.c
