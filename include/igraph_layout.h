@@ -91,6 +91,20 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_yifan_hu(const igraph_t *graph,
                                           const igraph_vector_t *miny,
                                           const igraph_vector_t *maxy);
 
+IGRAPH_EXPORT igraph_error_t igraph_layout_yifan_hu_3d(const igraph_t *graph,
+                                          igraph_matrix_t *res,
+                                          igraph_bool_t use_seed,
+                                          igraph_int_t maxiter,
+                                          igraph_real_t repulsive_exponent,
+                                          igraph_real_t natural_length,
+                                          igraph_real_t step,
+                                          igraph_bool_t adaptive_cooling,
+                                          igraph_real_t tolerance,
+                                          igraph_quadtree_scheme_t quadtree_scheme,
+                                          igraph_int_t max_qtree_level,
+                                          igraph_bool_t beautify_leaves,
+                                          const igraph_vector_t *weights);
+
 IGRAPH_EXPORT igraph_error_t igraph_layout_lgl(const igraph_t *graph, igraph_matrix_t *res,
                                     igraph_int_t maxiter, igraph_real_t maxdelta,
                                     igraph_real_t area, igraph_real_t coolexp,
