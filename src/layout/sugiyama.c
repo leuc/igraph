@@ -31,6 +31,10 @@
 #include "igraph_memory.h"
 #include "igraph_structural.h"
 #include "igraph_types.h"
+#include "igraph_progress.h"
+
+#include "core/interruption.h"
+#include "core/math.h"
 
 #include "internal/glpk_support.h"
 #include "cycles/feedback_sets.h"
@@ -198,9 +202,17 @@ static igraph_vector_int_t* igraph_i_layering_get(const igraph_i_layering_t* lay
 
 static igraph_error_t igraph_i_layout_sugiyama_place_nodes_vertically(const igraph_t* graph,
         const igraph_vector_t* weights, igraph_vector_int_t* membership);
+static igraph_error_t igraph_i_layout_sugiyama_calculate_cartesian_barycenters(
+        const igraph_t* graph, const igraph_i_layering_t* layering,
+        igraph_int_t layer_index, igraph_neimode_t direction,
+        const igraph_matrix_t* layout, igraph_vector_t* barycenters);
+static igraph_error_t igraph_i_layout_sugiyama_core(
+    const igraph_t *graph, igraph_matrix_t *res, igraph_matrix_list_t *routing,
+    const igraph_vector_int_t* layers, igraph_real_t hgap, igraph_real_t vgap,
+    igraph_int_t maxiter, const igraph_vector_t *weights, igraph_bool_t is_radial);
 static igraph_error_t igraph_i_layout_sugiyama_order_nodes_horizontally(const igraph_t* graph,
         igraph_matrix_t* layout, const igraph_i_layering_t* layering,
-        igraph_int_t maxiter);
+        igraph_int_t maxiter, igraph_bool_t is_radial);
 static igraph_error_t igraph_i_layout_sugiyama_place_nodes_horizontally(const igraph_t* graph,
         igraph_matrix_t* layout, const igraph_i_layering_t* layering,
         igraph_real_t hgap, igraph_int_t no_of_real_nodes);
@@ -279,6 +291,94 @@ igraph_error_t igraph_layout_sugiyama(
     const igraph_t *graph, igraph_matrix_t *res, igraph_matrix_list_t *routing,
     const igraph_vector_int_t* layers, igraph_real_t hgap, igraph_real_t vgap,
     igraph_int_t maxiter, const igraph_vector_t *weights
+) {
+    return igraph_i_layout_sugiyama_core(
+        graph, res, routing, layers, hgap, vgap, maxiter, weights, false
+    );
+}
+
+/**
+ * \function igraph_layout_sugiyama_radial
+ * \brief Radial Sugiyama layout algorithm for layered directed acyclic graphs.
+ *
+ * This function generates a standard Sugiyama layout and then maps the
+ * horizontal coordinates to concentric circles, turning edge routing
+ * waypoints into spiral segments as per Bachmaier.
+ *
+ * </para><para>
+ * Bachmaier, Christian. “A Radial Adaptation of the Sugiyama Framework for Visualizing Hierarchical Information.” IEEE Transactions on Visualization and Computer Graphics 13, no. 3 (2007): 583–94. https://doi.org/10.1109/TVCG.2007.1000.
+ *
+ * Parameters are the same as igraph_layout_sugiyama()
+ */
+igraph_error_t igraph_layout_sugiyama_radial(
+    const igraph_t *graph, igraph_matrix_t *res, igraph_matrix_list_t *routing,
+    const igraph_vector_int_t* layers, igraph_real_t hgap, igraph_real_t vgap,
+    igraph_int_t maxiter, const igraph_vector_t *weights
+) {
+    igraph_int_t i, j;
+    igraph_int_t no_of_nodes = igraph_vcount(graph);
+
+    /* Run the standard horizontal Sugiyama layout */
+    IGRAPH_CHECK(igraph_i_layout_sugiyama_core(graph, res, routing, layers, hgap, vgap, maxiter, weights, true));
+
+    if (no_of_nodes == 0) return IGRAPH_SUCCESS;
+
+    IGRAPH_PROGRESS("Applying radial transformation", 0, NULL);
+
+    /* Find the maximum horizontal width (z) to normalize angles */
+    igraph_real_t min_x = MATRIX(*res, 0, 0);
+    igraph_real_t max_x = MATRIX(*res, 0, 0);
+
+    for (i = 1; i < no_of_nodes; i++) {
+        if (MATRIX(*res, i, 0) < min_x) min_x = MATRIX(*res, i, 0);
+        if (MATRIX(*res, i, 0) > max_x) max_x = MATRIX(*res, i, 0);
+    }
+
+    /* z is the maximum horizontal distance plus a gap delta_i */
+    igraph_real_t z = (max_x - min_x) + hgap;
+    if (z <= 0.0) z = 1.0; /* Fallback for single-node graphs */
+
+    /* Transform vertex coordinates from (x, y) to (r, theta) -> Cartesian */
+    for (i = 0; i < no_of_nodes; i++) {
+        IGRAPH_ALLOW_INTERRUPTION();
+
+        igraph_real_t x = MATRIX(*res, i, 0) - min_x; /* Normalize to start at 0 */
+        igraph_real_t y = MATRIX(*res, i, 1);         /* Y acts as the radius */
+
+        igraph_real_t theta = (x / z) * 2.0 * M_PI;
+
+        MATRIX(*res, i, 0) = y * cos(theta);
+        MATRIX(*res, i, 1) = y * sin(theta);
+    }
+
+    /* Transform edge routing control points (dummy vertices) */
+    if (routing) {
+        igraph_int_t no_of_edges = igraph_ecount(graph);
+        for (i = 0; i < no_of_edges; i++) {
+            igraph_matrix_t *control_points = igraph_matrix_list_get_ptr(routing, i);
+            igraph_int_t num_points = igraph_matrix_nrow(control_points);
+
+            for (j = 0; j < num_points; j++) {
+                igraph_real_t px = MATRIX(*control_points, j, 0) - min_x;
+                igraph_real_t py = MATRIX(*control_points, j, 1);
+
+                igraph_real_t p_theta = (px / z) * 2.0 * M_PI;
+
+                MATRIX(*control_points, j, 0) = py * cos(p_theta);
+                MATRIX(*control_points, j, 1) = py * sin(p_theta);
+            }
+        }
+    }
+
+    IGRAPH_PROGRESS("Applying radial transformation", 100.0, NULL);
+
+    return IGRAPH_SUCCESS;
+}
+
+igraph_error_t igraph_i_layout_sugiyama_core(
+    const igraph_t *graph, igraph_matrix_t *res, igraph_matrix_list_t *routing,
+    const igraph_vector_int_t* layers, igraph_real_t hgap, igraph_real_t vgap,
+    igraph_int_t maxiter, const igraph_vector_t *weights, igraph_bool_t is_radial
 ) {
     igraph_int_t i, j, k, l, nei;
     igraph_int_t no_of_nodes = igraph_vcount(graph);
@@ -464,7 +564,7 @@ igraph_error_t igraph_layout_sugiyama(
 
             /* Find the order in which the nodes within a layer should be placed */
             IGRAPH_CHECK(igraph_i_layout_sugiyama_order_nodes_horizontally(&subgraph, &layout,
-                         &layering, maxiter));
+                         &layering, maxiter, is_radial));
 
             /* Assign the horizontal coordinates. This is according to the algorithm
              * of Brandes & Köpf */
@@ -718,7 +818,7 @@ static igraph_error_t igraph_i_layout_sugiyama_calculate_barycenters(const igrap
  */
 static igraph_error_t igraph_i_layout_sugiyama_order_nodes_horizontally(const igraph_t* graph,
         igraph_matrix_t* layout, const igraph_i_layering_t* layering,
-        igraph_int_t maxiter) {
+        igraph_int_t maxiter, igraph_bool_t is_radial) {
     igraph_int_t i, n, nei;
     igraph_int_t no_of_vertices = igraph_vcount(graph);
     igraph_int_t no_of_layers = igraph_i_layering_num_layers(layering);
@@ -758,9 +858,13 @@ static igraph_error_t igraph_i_layout_sugiyama_order_nodes_horizontally(const ig
             layer_members = igraph_i_layering_get(layering, layer_index);
             n = igraph_vector_int_size(layer_members);
             IGRAPH_CHECK(igraph_vector_int_resize(&new_layer_members, n));
-
-            igraph_i_layout_sugiyama_calculate_barycenters(graph,
+            if (is_radial) {
+                igraph_i_layout_sugiyama_calculate_cartesian_barycenters(graph,
                     layering, layer_index, IGRAPH_IN, layout, &barycenters);
+            } else {
+                igraph_i_layout_sugiyama_calculate_barycenters(graph,
+                    layering, layer_index, IGRAPH_IN, layout, &barycenters);
+            }
 
 #ifdef SUGIYAMA_DEBUG
             printf("Layer %" IGRAPH_PRId ", aligning to upper barycenters\n", layer_index);
@@ -792,9 +896,13 @@ static igraph_error_t igraph_i_layout_sugiyama_order_nodes_horizontally(const ig
             n = igraph_vector_int_size(layer_members);
             IGRAPH_CHECK(igraph_vector_int_resize(&new_layer_members, n));
 
-            igraph_i_layout_sugiyama_calculate_barycenters(graph,
+            if (is_radial) {
+                igraph_i_layout_sugiyama_calculate_cartesian_barycenters(graph,
                     layering, layer_index, IGRAPH_OUT, layout, &barycenters);
-
+            } else {
+                igraph_i_layout_sugiyama_calculate_barycenters(graph,
+                    layering, layer_index, IGRAPH_OUT, layout, &barycenters);
+            }
 #ifdef SUGIYAMA_DEBUG
             printf("Layer %" IGRAPH_PRId ", aligning to lower barycenters\n", layer_index);
             printf("Vertices: "); igraph_vector_int_print(layer_members);
@@ -1041,6 +1149,68 @@ static igraph_error_t igraph_i_layout_sugiyama_place_nodes_horizontally(const ig
     IGRAPH_FINALLY_CLEAN(1);
 
     igraph_vector_bool_destroy(&ignored_edges);
+    IGRAPH_FINALLY_CLEAN(1);
+
+    return IGRAPH_SUCCESS;
+}
+
+/**
+ * Calculates Cartesian barycenters for crossing reduction in radial layouts
+ * as defined in Bachmaier, Section 4.2.
+ */
+static igraph_error_t igraph_i_layout_sugiyama_calculate_cartesian_barycenters(
+        const igraph_t* graph,
+        const igraph_i_layering_t* layering, igraph_int_t layer_index,
+        igraph_neimode_t direction, const igraph_matrix_t* layout,
+        igraph_vector_t* barycenters) {
+
+    igraph_int_t i, j, m, n;
+    igraph_vector_int_t* layer_members = igraph_i_layering_get(layering, layer_index);
+    igraph_vector_int_t neis;
+
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&neis, 0);
+
+    n = igraph_vector_int_size(layer_members);
+    IGRAPH_CHECK(igraph_vector_resize(barycenters, n));
+    igraph_vector_null(barycenters);
+
+    /* We need the size of the adjacent layer to map to [0, 2*PI] */
+    igraph_int_t adj_layer_index = (direction == IGRAPH_IN) ? layer_index - 1 : layer_index + 1;
+    igraph_int_t adj_layer_size = 1;
+    if (adj_layer_index >= 0 && adj_layer_index < igraph_i_layering_num_layers(layering)) {
+        adj_layer_size = igraph_vector_int_size(igraph_i_layering_get(layering, adj_layer_index));
+    }
+
+    for (i = 0; i < n; i++) {
+        IGRAPH_CHECK(igraph_neighbors(
+            graph, &neis, VECTOR(*layer_members)[i], direction,
+            IGRAPH_NO_LOOPS, IGRAPH_MULTIPLE
+        ));
+        m = igraph_vector_int_size(&neis);
+        if (m == 0) {
+            /* No neighbors, keep current position represented as an angle */
+            VECTOR(*barycenters)[i] = (MATRIX(*layout, i, 0) / n) * 2.0 * M_PI;
+        } else {
+            igraph_real_t sum_x = 0.0;
+            igraph_real_t sum_y = 0.0;
+
+            for (j = 0; j < m; j++) {
+                igraph_int_t nei = VECTOR(neis)[j];
+                /* Map horizontal order index to an angle on a unit circle */
+                igraph_real_t angle = (MATRIX(*layout, nei, 0) / adj_layer_size) * 2.0 * M_PI;
+                sum_x += cos(angle);
+                sum_y += sin(angle);
+            }
+
+            /* Calculate beta(v) - the Cartesian angle */
+            igraph_real_t beta = atan2(sum_y / m, sum_x / m);
+            if (beta < 0) beta += 2.0 * M_PI; /* Normalize to [0, 2*PI] */
+
+            VECTOR(*barycenters)[i] = beta;
+        }
+    }
+
+    igraph_vector_int_destroy(&neis);
     IGRAPH_FINALLY_CLEAN(1);
 
     return IGRAPH_SUCCESS;

@@ -90,7 +90,11 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_sugiyama(
     const igraph_t *graph, igraph_matrix_t *res, igraph_matrix_list_t *routing,
     const igraph_vector_int_t* layers, igraph_real_t hgap,
     igraph_real_t vgap, igraph_int_t maxiter, const igraph_vector_t *weights);
-
+IGRAPH_EXPORT igraph_error_t igraph_layout_sugiyama_radial(
+    const igraph_t *graph, igraph_matrix_t *res, igraph_matrix_list_t *routing,
+    const igraph_vector_int_t* layers, igraph_real_t hgap, igraph_real_t vgap,
+    igraph_int_t maxiter, const igraph_vector_t *weights
+);
 IGRAPH_EXPORT igraph_error_t igraph_layout_random_3d(const igraph_t *graph, igraph_matrix_t *res);
 IGRAPH_EXPORT igraph_error_t igraph_layout_sphere(const igraph_t *graph, igraph_matrix_t *res);
 IGRAPH_EXPORT igraph_error_t igraph_layout_grid_3d(const igraph_t *graph, igraph_matrix_t *res,
