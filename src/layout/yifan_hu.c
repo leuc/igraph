@@ -18,21 +18,207 @@
 
 #include "igraph_layout.h"
 
+#define _USE_MATH_DEFINES
+
 #include "igraph_random.h"
 #include "igraph_interface.h"
 
-#include "core/grid.h"
+#include "core/barnes_hut.h"
 #include "core/interruption.h"
 #include "layout/layout_internal.h"
 
-static igraph_error_t igraph_layout_i_yifan_hu(
+#define IGRAPH_YHU_C 0.2
+#define IGRAPH_YHU_BH 0.6
+#define IGRAPH_YHU_TOL 0.001
+#define IGRAPH_YHU_COOL 0.90
+#define IGRAPH_YHU_QUADTREE_SIZE 45
+
+typedef struct {
+    double p;
+    double KP;
+    double CRK;
+    double K;
+    int dim;
+    const igraph_t *graph;
+    const igraph_vector_t *weights;
+} yhu_data_t;
+
+static void yhu_repulsive_force(
+    const igraph_bh_point_t *p1,
+    const igraph_bh_point_t *p2,
+    double *force,
+    void *user_data
+) {
+    yhu_data_t *data = (yhu_data_t *)user_data;
+
+    if (p1->id == p2->id) {
+        return;
+    }
+
+    double dx = p1->coord[0] - p2->coord[0];
+    double dy = p1->coord[1] - p2->coord[1];
+    double dist_sq = dx*dx + dy*dy;
+
+    if (dist_sq < 1e-12) {
+        return;
+    }
+
+    double dist = sqrt(dist_sq);
+    double exp_factor = 1.0 - data->p;
+
+    if (exp_factor < 0) {
+        exp_factor = -exp_factor;
+    }
+
+    double scale = data->KP / pow(dist, exp_factor);
+
+    if (!isfinite(scale)) {
+        scale = 1e10;
+    }
+
+    force[0] = scale * dx / dist;
+    force[1] = scale * dy / dist;
+}
+
+static void yhu_attractive_force(
+    const igraph_bh_point_t *p1,
+    const igraph_bh_point_t *p2,
+    double *force,
+    void *user_data
+) {
+    yhu_data_t *data = (yhu_data_t *)user_data;
+
+    double dx = p1->coord[0] - p2->coord[0];
+    double dy = p1->coord[1] - p2->coord[1];
+    double dist = sqrt(dx*dx + dy*dy);
+
+    if (dist < 1e-12) {
+        return;
+    }
+
+    double scale = -data->CRK * dist;
+
+    force[0] = scale * dx;
+    force[1] = scale * dy;
+}
+
+static double update_step(igraph_bool_t adaptive_cooling, double step, double Fnorm, double Fnorm0) {
+    if (!adaptive_cooling) {
+        return IGRAPH_YHU_COOL * step;
+    }
+    if (Fnorm >= Fnorm0) {
+        return IGRAPH_YHU_COOL * step;
+    } else if (Fnorm > 0.95 * Fnorm0) {
+        return step;
+    } else {
+        return 0.99 * step / IGRAPH_YHU_COOL;
+    }
+}
+
+static igraph_error_t compute_average_edge_length(
+    const igraph_t *graph,
+    const igraph_matrix_t *coords,
+    const igraph_vector_t *weights,
+    double *avg_len
+) {
+    igraph_integer_t ecount = igraph_ecount(graph);
+    if (ecount == 0) {
+        *avg_len = 1.0;
+        return IGRAPH_SUCCESS;
+    }
+
+    double total_len = 0.0;
+    for (igraph_integer_t e = 0; e < ecount; e++) {
+        igraph_integer_t from = IGRAPH_FROM(graph, e);
+        igraph_integer_t to = IGRAPH_TO(graph, e);
+        double dx = MATRIX(*coords, from, 0) - MATRIX(*coords, to, 0);
+        double dy = MATRIX(*coords, from, 1) - MATRIX(*coords, to, 1);
+        double w = weights ? VECTOR(*weights)[e] : 1.0;
+        total_len += sqrt(dx*dx + dy*dy) * w;
+    }
+
+    *avg_len = total_len / ecount;
+    return IGRAPH_SUCCESS;
+}
+
+static igraph_error_t beautify_leaves(
+    const igraph_t *graph,
+    igraph_matrix_t *coords
+) {
+    igraph_integer_t vcount = igraph_vcount(graph);
+    igraph_integer_t ecount = igraph_ecount(graph);
+
+    if (ecount == 0 || vcount == 0) {
+        return IGRAPH_SUCCESS;
+    }
+
+    igraph_vector_int_t degrees;
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&degrees, vcount);
+
+    IGRAPH_CHECK(igraph_degree(graph, &degrees, igraph_vss_all(), IGRAPH_ALL, IGRAPH_LOOPS));
+
+    for (igraph_integer_t i = 0; i < vcount; i++) {
+        if (VECTOR(degrees)[i] == 1) {
+            igraph_integer_t parent = -1;
+            for (igraph_integer_t e = 0; e < ecount; e++) {
+                igraph_integer_t from = IGRAPH_FROM(graph, e);
+                igraph_integer_t to = IGRAPH_TO(graph, e);
+                if (from == i) {
+                    parent = to;
+                    break;
+                } else if (to == i) {
+                    parent = from;
+                    break;
+                }
+            }
+
+            if (parent >= 0) {
+                double px = MATRIX(*coords, parent, 0);
+                double py = MATRIX(*coords, parent, 1);
+
+                int leaf_count = 0;
+                for (igraph_integer_t j = 0; j < vcount; j++) {
+                    if (j != parent && VECTOR(degrees)[j] == 1) {
+                        for (igraph_integer_t e = 0; e < ecount; e++) {
+                            igraph_integer_t from = IGRAPH_FROM(graph, e);
+                            igraph_integer_t to = IGRAPH_TO(graph, e);
+                            if ((from == j && to == parent) || (to == j && from == parent)) {
+                                leaf_count++;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (leaf_count > 0) {
+                    double angle = 2.0 * 3.14159265358979323846 * (double)i / (double)vcount;
+                    double radius = 5.0;
+                    MATRIX(*coords, i, 0) = px + radius * cos(angle);
+                    MATRIX(*coords, i, 1) = py + radius * sin(angle);
+                }
+            }
+        }
+    }
+
+    igraph_vector_int_destroy(&degrees);
+    IGRAPH_FINALLY_CLEAN(1);
+
+    return IGRAPH_SUCCESS;
+}
+
+static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         const igraph_t *graph,
         igraph_matrix_t *res,
         igraph_bool_t use_seed,
-        igraph_int_t niter,
-        igraph_real_t relative_strength,
-        igraph_real_t step_ratio,
-        igraph_real_t convergence_threshold,
+        igraph_int_t maxiter,
+        igraph_real_t repulsive_exponent,
+        igraph_real_t natural_length,
+        igraph_real_t step,
+        igraph_bool_t adaptive_cooling,
+        igraph_real_t tolerance,
+        igraph_quadtree_scheme_t quadtree_scheme,
+        igraph_int_t max_qtree_level,
+        igraph_bool_t beautify_leaves_flag,
         const igraph_vector_t *weights,
         const igraph_vector_t *minx,
         const igraph_vector_t *maxx,
@@ -41,44 +227,189 @@ static igraph_error_t igraph_layout_i_yifan_hu(
 
     const igraph_int_t vcount = igraph_vcount(graph);
     const igraph_int_t ecount = igraph_ecount(graph);
-    igraph_vector_t disp_x, disp_y;
-    igraph_real_t optimal_distance, step;
-    igraph_real_t energy0 = IGRAPH_INFINITY, energy;
-    igraph_int_t progress = 0;
-    igraph_real_t avg_edge_length = 0;
 
-    if (ecount > 0) {
-        igraph_real_t total_len = 0;
-        for (igraph_int_t e = 0; e < ecount; e++) {
-            igraph_int_t from = IGRAPH_FROM(graph, e);
-            igraph_int_t to = IGRAPH_TO(graph, e);
-            igraph_real_t dx = MATRIX(*res, from, 0) - MATRIX(*res, to, 0);
-            igraph_real_t dy = MATRIX(*res, from, 1) - MATRIX(*res, to, 1);
-            igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
-            total_len += sqrt(dx*dx + dy*dy) * w;
-        }
-        avg_edge_length = total_len / ecount;
-    } else {
-        avg_edge_length = 1.0;
+    if (vcount == 0) {
+        return IGRAPH_SUCCESS;
     }
 
-    optimal_distance = pow(relative_strength, 1.0/3.0) * avg_edge_length;
-    step = optimal_distance / 5.0;
+    if (!use_seed) {
+        IGRAPH_CHECK(igraph_matrix_resize(res, vcount, 2));
+        igraph_i_layout_random_bounded(graph, res, minx, maxx, miny, maxy);
+    }
 
+    double K = natural_length;
+    if (K < 0) {
+        IGRAPH_CHECK(compute_average_edge_length(graph, res, weights, &K));
+    }
+
+    double p = repulsive_exponent;
+    if (p >= 0) {
+        p = -1.0;
+    }
+
+    double KP = pow(K, 1.0 - p);
+    double CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
+
+    yhu_data_t yhu_data = {
+        .p = p,
+        .KP = KP,
+        .CRK = CRK,
+        .K = K,
+        .dim = 2,
+        .graph = graph,
+        .weights = weights
+    };
+
+    igraph_bh_tree_t tree;
+    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 2, IGRAPH_YHU_BH, (int)max_qtree_level));
+    IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
+
+    igraph_vector_int_t from, to;
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&from, ecount);
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&to, ecount);
+
+    for (igraph_integer_t e = 0; e < ecount; e++) {
+        VECTOR(from)[e] = IGRAPH_FROM(graph, e);
+        VECTOR(to)[e] = IGRAPH_TO(graph, e);
+    }
+
+    double Fnorm0 = IGRAPH_INFINITY;
+
+    for (igraph_int_t iter = 0; iter < maxiter; iter++) {
+        IGRAPH_ALLOW_INTERRUPTION();
+
+        IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL, 2, (int)max_qtree_level, IGRAPH_YHU_BH));
+
+        igraph_matrix_t forces;
+        IGRAPH_CHECK(igraph_matrix_init(&forces, vcount, 2));
+        IGRAPH_FINALLY(igraph_matrix_destroy, &forces);
+
+        igraph_bh_calculate_repulsive_forces(&tree, &forces, yhu_repulsive_force, &yhu_data);
+
+        igraph_bh_calculate_attractive_forces(&tree, &from, &to, weights, &forces, yhu_attractive_force, &yhu_data);
+
+        double Fnorm = 0.0;
+        for (igraph_integer_t i = 0; i < vcount; i++) {
+            double fx = MATRIX(forces, i, 0);
+            double fy = MATRIX(forces, i, 1);
+            double fmag = sqrt(fx*fx + fy*fy);
+
+            if (fmag > 1e-12) {
+                MATRIX(forces, i, 0) = fx / fmag;
+                MATRIX(forces, i, 1) = fy / fmag;
+            }
+            Fnorm += fmag;
+        }
+
+        for (igraph_integer_t i = 0; i < vcount; i++) {
+            MATRIX(*res, i, 0) += step * MATRIX(forces, i, 0);
+            MATRIX(*res, i, 1) += step * MATRIX(forces, i, 1);
+
+            if (minx && MATRIX(*res, i, 0) < VECTOR(*minx)[i]) {
+                MATRIX(*res, i, 0) = VECTOR(*minx)[i];
+            }
+            if (maxx && MATRIX(*res, i, 0) > VECTOR(*maxx)[i]) {
+                MATRIX(*res, i, 0) = VECTOR(*maxx)[i];
+            }
+            if (miny && MATRIX(*res, i, 1) < VECTOR(*miny)[i]) {
+                MATRIX(*res, i, 1) = VECTOR(*miny)[i];
+            }
+            if (maxy && MATRIX(*res, i, 1) > VECTOR(*maxy)[i]) {
+                MATRIX(*res, i, 1) = VECTOR(*maxy)[i];
+            }
+        }
+
+        igraph_matrix_destroy(&forces);
+        IGRAPH_FINALLY_CLEAN(1);
+
+        if (iter > 0 && step <= tolerance) {
+            break;
+        }
+
+        step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
+        Fnorm0 = Fnorm;
+    }
+
+    if (beautify_leaves_flag) {
+        IGRAPH_CHECK(beautify_leaves(graph, res));
+    }
+
+    igraph_vector_int_destroy(&from);
+    igraph_vector_int_destroy(&to);
+    igraph_bh_tree_destroy(&tree);
+    IGRAPH_FINALLY_CLEAN(3);
+
+    return IGRAPH_SUCCESS;
+}
+
+static igraph_error_t igraph_layout_i_yifan_hu_exact(
+        const igraph_t *graph,
+        igraph_matrix_t *res,
+        igraph_bool_t use_seed,
+        igraph_int_t maxiter,
+        igraph_real_t repulsive_exponent,
+        igraph_real_t natural_length,
+        igraph_real_t step,
+        igraph_bool_t adaptive_cooling,
+        igraph_real_t tolerance,
+        igraph_bool_t beautify_leaves_flag,
+        const igraph_vector_t *weights,
+        const igraph_vector_t *minx,
+        const igraph_vector_t *maxx,
+        const igraph_vector_t *miny,
+        const igraph_vector_t *maxy) {
+
+    const igraph_int_t vcount = igraph_vcount(graph);
+    const igraph_int_t ecount = igraph_ecount(graph);
+
+    if (vcount == 0) {
+        return IGRAPH_SUCCESS;
+    }
+
+    if (!use_seed) {
+        IGRAPH_CHECK(igraph_matrix_resize(res, vcount, 2));
+        igraph_i_layout_random_bounded(graph, res, minx, maxx, miny, maxy);
+    }
+
+    double K = natural_length;
+    if (K < 0) {
+        IGRAPH_CHECK(compute_average_edge_length(graph, res, weights, &K));
+    }
+
+    double p = repulsive_exponent;
+    if (p >= 0) {
+        p = -1.0;
+    }
+
+    double KP = pow(K, 1.0 - p);
+    double CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
+
+    igraph_vector_t disp_x, disp_y;
     IGRAPH_VECTOR_INIT_FINALLY(&disp_x, vcount);
     IGRAPH_VECTOR_INIT_FINALLY(&disp_y, vcount);
 
-    for (igraph_int_t iter = 0; iter < niter; iter++) {
+    igraph_vector_int_t from, to;
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&from, ecount);
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&to, ecount);
+
+    for (igraph_integer_t e = 0; e < ecount; e++) {
+        VECTOR(from)[e] = IGRAPH_FROM(graph, e);
+        VECTOR(to)[e] = IGRAPH_TO(graph, e);
+    }
+
+    double Fnorm0 = IGRAPH_INFINITY;
+
+    for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
 
         igraph_vector_null(&disp_x);
         igraph_vector_null(&disp_y);
 
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            for (igraph_int_t j = i + 1; j < vcount; j++) {
-                igraph_real_t dx = MATRIX(*res, i, 0) - MATRIX(*res, j, 0);
-                igraph_real_t dy = MATRIX(*res, i, 1) - MATRIX(*res, j, 1);
-                igraph_real_t d2 = dx*dx + dy*dy;
+        for (igraph_integer_t i = 0; i < vcount; i++) {
+            for (igraph_integer_t j = i + 1; j < vcount; j++) {
+                double dx = MATRIX(*res, i, 0) - MATRIX(*res, j, 0);
+                double dy = MATRIX(*res, i, 1) - MATRIX(*res, j, 1);
+                double d2 = dx*dx + dy*dy;
 
                 if (d2 == 0) {
                     dx = RNG_UNIF(-1e-9, 1e-9);
@@ -86,11 +417,16 @@ static igraph_error_t igraph_layout_i_yifan_hu(
                     d2 = dx*dx + dy*dy;
                 }
 
-                igraph_real_t dist = sqrt(d2);
-                igraph_real_t scale = -relative_strength * optimal_distance * optimal_distance / d2;
+                double dist = sqrt(d2);
+                double exp_factor = 1.0 - p;
+                if (exp_factor < 0) {
+                    exp_factor = -exp_factor;
+                }
+
+                double scale = KP / pow(dist, exp_factor);
 
                 if (!isfinite(scale)) {
-                    scale = -1.0;
+                    scale = 1e10;
                 }
 
                 VECTOR(disp_x)[i] += scale * dx / dist;
@@ -100,44 +436,41 @@ static igraph_error_t igraph_layout_i_yifan_hu(
             }
         }
 
-        for (igraph_int_t e = 0; e < ecount; e++) {
-            igraph_int_t from = IGRAPH_FROM(graph, e);
-            igraph_int_t to = IGRAPH_TO(graph, e);
-            igraph_real_t dx = MATRIX(*res, from, 0) - MATRIX(*res, to, 0);
-            igraph_real_t dy = MATRIX(*res, from, 1) - MATRIX(*res, to, 1);
-            igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
-            igraph_real_t dist = sqrt(dx*dx + dy*dy);
+        for (igraph_integer_t e = 0; e < ecount; e++) {
+            igraph_integer_t from_idx = VECTOR(from)[e];
+            igraph_integer_t to_idx = VECTOR(to)[e];
+            double dx = MATRIX(*res, from_idx, 0) - MATRIX(*res, to_idx, 0);
+            double dy = MATRIX(*res, from_idx, 1) - MATRIX(*res, to_idx, 1);
+            double w = weights ? VECTOR(*weights)[e] : 1.0;
+            double dist = sqrt(dx*dx + dy*dy);
             if (dist == 0) {
                 dist = 1e-9;
             }
-            igraph_real_t scale = dist * w / optimal_distance;
 
-            VECTOR(disp_x)[from] -= dx * scale;
-            VECTOR(disp_y)[from] -= dy * scale;
-            VECTOR(disp_x)[to] += dx * scale;
-            VECTOR(disp_y)[to] += dy * scale;
+            double scale = -CRK * dist * w;
+
+            VECTOR(disp_x)[from_idx] += scale * dx;
+            VECTOR(disp_y)[from_idx] += scale * dy;
+            VECTOR(disp_x)[to_idx] -= scale * dx;
+            VECTOR(disp_y)[to_idx] -= scale * dy;
         }
 
-        energy = 0;
-        igraph_real_t max_force = 1;
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            igraph_real_t fx = VECTOR(disp_x)[i];
-            igraph_real_t fy = VECTOR(disp_y)[i];
-            igraph_real_t norm = sqrt(fx*fx + fy*fy);
-            energy += norm;
-            if (norm > max_force) {
-                max_force = norm;
+        double Fnorm = 0.0;
+        for (igraph_integer_t i = 0; i < vcount; i++) {
+            double fx = VECTOR(disp_x)[i];
+            double fy = VECTOR(disp_y)[i];
+            double fmag = sqrt(fx*fx + fy*fy);
+
+            if (fmag > 1e-12) {
+                VECTOR(disp_x)[i] /= fmag;
+                VECTOR(disp_y)[i] /= fmag;
             }
+            Fnorm += fmag;
         }
 
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            VECTOR(disp_x)[i] *= step / max_force;
-            VECTOR(disp_y)[i] *= step / max_force;
-        }
-
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            MATRIX(*res, i, 0) += VECTOR(disp_x)[i];
-            MATRIX(*res, i, 1) += VECTOR(disp_y)[i];
+        for (igraph_integer_t i = 0; i < vcount; i++) {
+            MATRIX(*res, i, 0) += step * VECTOR(disp_x)[i];
+            MATRIX(*res, i, 1) += step * VECTOR(disp_y)[i];
 
             if (minx && MATRIX(*res, i, 0) < VECTOR(*minx)[i]) {
                 MATRIX(*res, i, 0) = VECTOR(*minx)[i];
@@ -153,202 +486,23 @@ static igraph_error_t igraph_layout_i_yifan_hu(
             }
         }
 
-        if (iter > 0 && convergence_threshold > 0) {
-            if (fabs((energy - energy0) / energy) < convergence_threshold) {
-                break;
-            }
+        if (iter > 0 && step <= tolerance) {
+            break;
         }
 
-        if (energy < energy0) {
-            progress++;
-            if (progress >= 5) {
-                progress = 0;
-                step /= step_ratio;
-            }
-        } else {
-            progress = 0;
-            step *= step_ratio;
-        }
+        step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
+        Fnorm0 = Fnorm;
+    }
 
-        energy0 = energy;
+    if (beautify_leaves_flag) {
+        IGRAPH_CHECK(beautify_leaves(graph, res));
     }
 
     igraph_vector_destroy(&disp_x);
     igraph_vector_destroy(&disp_y);
-    IGRAPH_FINALLY_CLEAN(2);
-
-    return IGRAPH_SUCCESS;
-}
-
-static igraph_error_t igraph_layout_i_grid_yifan_hu(
-        const igraph_t *graph,
-        igraph_matrix_t *res,
-        igraph_bool_t use_seed,
-        igraph_int_t niter,
-        igraph_real_t relative_strength,
-        igraph_real_t step_ratio,
-        igraph_real_t convergence_threshold,
-        const igraph_vector_t *weights,
-        const igraph_vector_t *minx,
-        const igraph_vector_t *maxx,
-        const igraph_vector_t *miny,
-        const igraph_vector_t *maxy) {
-
-    const igraph_int_t vcount = igraph_vcount(graph);
-    const igraph_int_t ecount = igraph_ecount(graph);
-    const igraph_real_t width = sqrt(vcount), height = width;
-    igraph_2dgrid_t grid;
-    igraph_vector_t disp_x, disp_y;
-    igraph_real_t optimal_distance, step;
-    igraph_real_t energy0 = IGRAPH_INFINITY, energy;
-    igraph_int_t progress = 0;
-    igraph_2dgrid_iterator_t vidit;
-    const igraph_real_t cellsize = 2.0;
-    igraph_real_t avg_edge_length = 0;
-
-    if (ecount > 0) {
-        igraph_real_t total_len = 0;
-        for (igraph_int_t e = 0; e < ecount; e++) {
-            igraph_int_t from = IGRAPH_FROM(graph, e);
-            igraph_int_t to = IGRAPH_TO(graph, e);
-            igraph_real_t dx = MATRIX(*res, from, 0) - MATRIX(*res, to, 0);
-            igraph_real_t dy = MATRIX(*res, from, 1) - MATRIX(*res, to, 1);
-            igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
-            total_len += sqrt(dx*dx + dy*dy) * w;
-        }
-        avg_edge_length = total_len / ecount;
-    } else {
-        avg_edge_length = 1.0;
-    }
-
-    optimal_distance = pow(relative_strength, 1.0/3.0) * avg_edge_length;
-    step = optimal_distance / 5.0;
-
-    IGRAPH_CHECK(igraph_2dgrid_init(&grid, res, -width/2, width/2, cellsize,
-                                    -height/2, height/2, cellsize));
-    IGRAPH_FINALLY(igraph_2dgrid_destroy, &grid);
-
-    for (igraph_int_t i = 0; i < vcount; i++) {
-        igraph_2dgrid_add2(&grid, i);
-    }
-
-    IGRAPH_VECTOR_INIT_FINALLY(&disp_x, vcount);
-    IGRAPH_VECTOR_INIT_FINALLY(&disp_y, vcount);
-
-    for (igraph_int_t iter = 0; iter < niter; iter++) {
-        igraph_int_t v, u;
-
-        IGRAPH_ALLOW_INTERRUPTION();
-
-        igraph_vector_null(&disp_x);
-        igraph_vector_null(&disp_y);
-
-        igraph_2dgrid_reset(&grid, &vidit);
-        while ((v = igraph_2dgrid_next(&grid, &vidit) - 1) != -1) {
-            while ((u = igraph_2dgrid_next_nei(&grid, &vidit) - 1) != -1) {
-                igraph_real_t dx = MATRIX(*res, v, 0) - MATRIX(*res, u, 0);
-                igraph_real_t dy = MATRIX(*res, v, 1) - MATRIX(*res, u, 1);
-                igraph_real_t d2 = dx*dx + dy*dy;
-
-                if (d2 == 0) {
-                    dx = RNG_UNIF(-1e-9, 1e-9);
-                    dy = RNG_UNIF(-1e-9, 1e-9);
-                    d2 = dx*dx + dy*dy;
-                }
-
-                if (d2 < cellsize * cellsize) {
-                    igraph_real_t dist = sqrt(d2);
-                    igraph_real_t scale = -relative_strength * optimal_distance * optimal_distance / d2;
-
-                    if (!isfinite(scale)) {
-                        scale = -1.0;
-                    }
-
-                    VECTOR(disp_x)[v] += scale * dx / dist;
-                    VECTOR(disp_y)[v] += scale * dy / dist;
-                    VECTOR(disp_x)[u] -= scale * dx / dist;
-                    VECTOR(disp_y)[u] -= scale * dy / dist;
-                }
-            }
-        }
-
-        for (igraph_int_t e = 0; e < ecount; e++) {
-            igraph_int_t from = IGRAPH_FROM(graph, e);
-            igraph_int_t to = IGRAPH_TO(graph, e);
-            igraph_real_t dx = MATRIX(*res, from, 0) - MATRIX(*res, to, 0);
-            igraph_real_t dy = MATRIX(*res, from, 1) - MATRIX(*res, to, 1);
-            igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
-            igraph_real_t dist = sqrt(dx*dx + dy*dy);
-            if (dist == 0) {
-                dist = 1e-9;
-            }
-            igraph_real_t scale = dist * w / optimal_distance;
-
-            VECTOR(disp_x)[from] -= dx * scale;
-            VECTOR(disp_y)[from] -= dy * scale;
-            VECTOR(disp_x)[to] += dx * scale;
-            VECTOR(disp_y)[to] += dy * scale;
-        }
-
-        energy = 0;
-        igraph_real_t max_force = 1;
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            igraph_real_t fx = VECTOR(disp_x)[i];
-            igraph_real_t fy = VECTOR(disp_y)[i];
-            igraph_real_t norm = sqrt(fx*fx + fy*fy);
-            energy += norm;
-            if (norm > max_force) {
-                max_force = norm;
-            }
-        }
-
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            VECTOR(disp_x)[i] *= step / max_force;
-            VECTOR(disp_y)[i] *= step / max_force;
-        }
-
-        for (igraph_int_t i = 0; i < vcount; i++) {
-            MATRIX(*res, i, 0) += VECTOR(disp_x)[i];
-            MATRIX(*res, i, 1) += VECTOR(disp_y)[i];
-
-            if (minx && MATRIX(*res, i, 0) < VECTOR(*minx)[i]) {
-                MATRIX(*res, i, 0) = VECTOR(*minx)[i];
-            }
-            if (maxx && MATRIX(*res, i, 0) > VECTOR(*maxx)[i]) {
-                MATRIX(*res, i, 0) = VECTOR(*maxx)[i];
-            }
-            if (miny && MATRIX(*res, i, 1) < VECTOR(*miny)[i]) {
-                MATRIX(*res, i, 1) = VECTOR(*miny)[i];
-            }
-            if (maxy && MATRIX(*res, i, 1) > VECTOR(*maxy)[i]) {
-                MATRIX(*res, i, 1) = VECTOR(*maxy)[i];
-            }
-        }
-
-        if (iter > 0 && convergence_threshold > 0) {
-            if (fabs((energy - energy0) / energy) < convergence_threshold) {
-                break;
-            }
-        }
-
-        if (energy < energy0) {
-            progress++;
-            if (progress >= 5) {
-                progress = 0;
-                step /= step_ratio;
-            }
-        } else {
-            progress = 0;
-            step *= step_ratio;
-        }
-
-        energy0 = energy;
-    }
-
-    igraph_vector_destroy(&disp_x);
-    igraph_vector_destroy(&disp_y);
-    igraph_2dgrid_destroy(&grid);
-    IGRAPH_FINALLY_CLEAN(3);
+    igraph_vector_int_destroy(&from);
+    igraph_vector_int_destroy(&to);
+    IGRAPH_FINALLY_CLEAN(4);
 
     return IGRAPH_SUCCESS;
 }
@@ -358,24 +512,19 @@ static igraph_error_t igraph_layout_i_grid_yifan_hu(
  * \function igraph_layout_yifan_hu
  * \brief Yifan Hu layout algorithm.
  *
- * This function implements the Yifan Hu force-directed layout algorithm.
+ * This function implements the Yifan Hu force-directed layout algorithm,
+ * based on the Graphviz SFDP (Spring-Electrical Force-Directed Placement)
+ * implementation.
  *
  * </para><para>
  * The algorithm uses an attraction force between connected vertices and
- * a repulsion force between all vertex pairs. The attraction force is
- * modeled as a spring (Hooke's law) and the repulsion force as electrical
- * charge repulsion (Coulomb's law). The optimal distance between vertices
- * is computed from the average edge length and a relative strength parameter.
+ * a repulsion force between all vertex pairs. The repulsion force uses
+ * the Barnes-Hut quadtree optimization for O(n log n) performance on
+ * larger graphs.
  *
  * </para><para>
  * The algorithm uses adaptive cooling: the step size is decreased when
- * the layout energy decreases for consecutive iterations, and increased
- * when the layout energy increases. This provides fast convergence while
- * avoiding oscillation.
- *
- * </para><para>
- * For large graphs, a grid-based approximation is used for the repulsion
- * calculation, providing O(n) performance.
+ * the total force magnitude increases, and increased when it decreases.
  *
  * </para><para>
  * Reference:
@@ -391,18 +540,22 @@ static igraph_error_t igraph_layout_i_grid_yifan_hu(
  * \param use_seed If true the supplied values in the
  *        \p res argument are used as an initial layout, if
  *        false a random initial layout is used.
- * \param niter The number of iterations to perform. A reasonable
+ * \param maxiter The number of iterations to perform. A reasonable
  *        default value is 500.
- * \param relative_strength Relative strength of the repulsion force.
- *        Smaller values result in more spread out layouts. Default is 0.2.
- * \param step_ratio Step size ratio for adaptive cooling. Default is 0.95.
- * \param convergence_threshold Convergence threshold. If the relative
- *        energy difference is below this threshold, the algorithm stops.
- *        Default is 1e-4. Set to 0 to disable early stopping.
- * \param grid Whether to use the grid-based approximation for large graphs.
- *        Possible values: \c IGRAPH_LAYOUT_GRID, \c IGRAPH_LAYOUT_NOGRID,
- *        \c IGRAPH_LAYOUT_AUTOGRID. The last one uses the grid-based
- *        version for graphs with more than 1000 vertices.
+ * \param repulsive_exponent Repulsive force exponent. Default is -1.0 (SFDP).
+ * \param natural_length Natural edge length. If negative, the average
+ *        edge length is used. Default is -1.0 (auto).
+ * \param step Initial step size. Default is 0.1.
+ * \param adaptive_cooling Use adaptive step cooling. Default is true.
+ * \param tolerance Convergence tolerance. If step size falls below
+ *        this value, the algorithm stops. Default is 0.001.
+ * \param quadtree_scheme Quadtree scheme to use. Options:
+ *        \c IGRAPH_QUADTREE_NORMAL, \c IGRAPH_QUADTREE_FAST,
+ *        \c IGRAPH_QUADTREE_HYBRID, \c IGRAPH_QUADTREE_NONE.
+ *        Default is \c IGRAPH_QUADTREE_NORMAL.
+ * \param max_qtree_level Maximum quadtree depth. Default is 10.
+ * \param beautify_leaves Arrange degree-1 nodes around their parent.
+ *        Default is false.
  * \param weights Pointer to a vector containing edge weights. Weights must
  *        be positive. If \c NULL, all edges are assumed to have weight 1.
  * \param minx Pointer to a vector, or a \c NULL pointer. If not a
@@ -417,8 +570,8 @@ static igraph_error_t igraph_layout_i_grid_yifan_hu(
  *        coordinates.
  * \return Error code.
  *
- * Time complexity: O(n^2) per iteration for the exact algorithm,
- * O(n) per iteration for the grid-based approximation, where n is the
+ * Time complexity: O(n^2) per iteration for exact algorithm,
+ * O(n log n) per iteration for Barnes-Hut, where n is the
  * number of vertices.
  */
 
@@ -426,11 +579,15 @@ igraph_error_t igraph_layout_yifan_hu(
         const igraph_t *graph,
         igraph_matrix_t *res,
         igraph_bool_t use_seed,
-        igraph_int_t niter,
-        igraph_real_t relative_strength,
-        igraph_real_t step_ratio,
-        igraph_real_t convergence_threshold,
-        igraph_layout_grid_t grid,
+        igraph_int_t maxiter,
+        igraph_real_t repulsive_exponent,
+        igraph_real_t natural_length,
+        igraph_real_t step,
+        igraph_bool_t adaptive_cooling,
+        igraph_real_t tolerance,
+        igraph_quadtree_scheme_t quadtree_scheme,
+        igraph_int_t max_qtree_level,
+        igraph_bool_t beautify_leaves,
         const igraph_vector_t *weights,
         const igraph_vector_t *minx,
         const igraph_vector_t *maxx,
@@ -440,18 +597,18 @@ igraph_error_t igraph_layout_yifan_hu(
     const igraph_int_t vcount = igraph_vcount(graph);
     const igraph_int_t ecount = igraph_ecount(graph);
 
-    if (niter < 0) {
+    if (maxiter < 0) {
         IGRAPH_ERROR("Number of iterations must be non-negative in "
                      "Yifan Hu layout.", IGRAPH_EINVAL);
     }
 
-    if (relative_strength <= 0) {
-        IGRAPH_ERROR("Relative strength must be positive in "
+    if (step <= 0) {
+        IGRAPH_ERROR("Step size must be positive in "
                      "Yifan Hu layout.", IGRAPH_EINVAL);
     }
 
-    if (step_ratio <= 0 || step_ratio >= 1) {
-        IGRAPH_ERROR("Step ratio must be in (0,1) in "
+    if (tolerance <= 0) {
+        IGRAPH_ERROR("Tolerance must be positive in "
                      "Yifan Hu layout.", IGRAPH_EINVAL);
     }
 
@@ -491,28 +648,30 @@ igraph_error_t igraph_layout_yifan_hu(
         return IGRAPH_SUCCESS;
     }
 
-    if (!use_seed) {
-        IGRAPH_CHECK(igraph_matrix_resize(res, vcount, 2));
-        igraph_i_layout_random_bounded(graph, res, minx, maxx, miny, maxy);
+    igraph_bool_t use_quadtree = (quadtree_scheme != IGRAPH_QUADTREE_NONE);
+
+    if (quadtree_scheme == IGRAPH_QUADTREE_HYBRID && vcount > 10000) {
+        use_quadtree = true;
+    } else if (quadtree_scheme == IGRAPH_QUADTREE_HYBRID) {
+        use_quadtree = false;
     }
 
-    if (grid == IGRAPH_LAYOUT_AUTOGRID) {
-        if (vcount > 1000) {
-            grid = IGRAPH_LAYOUT_GRID;
-        } else {
-            grid = IGRAPH_LAYOUT_NOGRID;
-        }
+    if (use_quadtree && vcount < IGRAPH_YHU_QUADTREE_SIZE) {
+        use_quadtree = false;
     }
 
-    if (grid == IGRAPH_LAYOUT_GRID) {
-        return igraph_layout_i_grid_yifan_hu(graph, res, use_seed, niter,
-                                             relative_strength, step_ratio,
-                                             convergence_threshold,
+    if (use_quadtree) {
+        return igraph_layout_i_yifan_hu_sfdp(graph, res, use_seed, maxiter,
+                                             repulsive_exponent, natural_length,
+                                             step, adaptive_cooling, tolerance,
+                                             quadtree_scheme, max_qtree_level,
+                                             beautify_leaves,
                                              weights, minx, maxx, miny, maxy);
     } else {
-        return igraph_layout_i_yifan_hu(graph, res, use_seed, niter,
-                                        relative_strength, step_ratio,
-                                        convergence_threshold,
-                                        weights, minx, maxx, miny, maxy);
+        return igraph_layout_i_yifan_hu_exact(graph, res, use_seed, maxiter,
+                                              repulsive_exponent, natural_length,
+                                              step, adaptive_cooling, tolerance,
+                                              beautify_leaves,
+                                              weights, minx, maxx, miny, maxy);
     }
 }

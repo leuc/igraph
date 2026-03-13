@@ -55,11 +55,20 @@ int main(void) {
     printf("Empty graph.\n");
     igraph_small(&g, 0, 0, -1);
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 100, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 1e-4, IGRAPH_LAYOUT_NOGRID,
-                  /*weight*/ NULL, /*minx*/ NULL, /*maxx*/ NULL, /*miny*/ NULL,
-                  /*maxy*/ NULL) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 0,
+                  /*maxiter*/ 100,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.05,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-4,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
+                  /*weights*/ NULL,
+                  /*minx*/ NULL, /*maxx*/ NULL,
+                  /*miny*/ NULL, /*maxy*/ NULL) == IGRAPH_SUCCESS);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
@@ -68,10 +77,19 @@ int main(void) {
     igraph_small(&g, 1, 0, -1);
     igraph_matrix_init(&result, 0, 0);
     make_box(1, 1.0, bounds);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 100, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 1e-4, IGRAPH_LAYOUT_NOGRID,
-                  /*weights*/ NULL, &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 0,
+                  /*maxiter*/ 100,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.05,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-4,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
+                  /*weights*/ NULL,
+                  &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 1.0);
     igraph_destroy(&g);
     destroy_bounds(bounds);
@@ -81,37 +99,71 @@ int main(void) {
     igraph_vector_init(&weights, 8);
     igraph_vector_fill(&weights, 100);
     make_box(10, 1.0, bounds);
-    printf("Without weights, grid or bounds.\n");
+    printf("Without weights, adaptive cooling.\n");
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 100, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 1e-4, IGRAPH_LAYOUT_NOGRID,
-                  /*weight*/ NULL, /*minx*/ NULL, /*maxx*/ NULL, /*miny*/ NULL,
-                  /*maxy*/ NULL) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 0,
+                  /*maxiter*/ 100,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.05,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-4,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
+                  /*weights*/ NULL,
+                  /*minx*/ NULL, /*maxx*/ NULL,
+                  /*miny*/ NULL, /*maxy*/ NULL) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 50.0);
 
-    printf("With weights and no grid.\n");
+    printf("With weights and adaptive cooling.\n");
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 100, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 1e-4, IGRAPH_LAYOUT_NOGRID,
-                  /*weight*/ &weights, /*minx*/ NULL, /*maxx*/ NULL, /*miny*/ NULL,
-                  /*maxy*/ NULL) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 0,
+                  /*maxiter*/ 100,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.05,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-4,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
+                  /*weights*/ &weights,
+                  /*minx*/ NULL, /*maxx*/ NULL,
+                  /*miny*/ NULL, /*maxy*/ NULL) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 50.0);
 
-    printf("With weights and grid and high temperature.\n");
+    printf("With weights, bounds and high temperature.\n");
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 10, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 0, IGRAPH_LAYOUT_GRID,
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 0,
+                  /*maxiter*/ 10,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.1,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-6,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
                   &weights, &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 1.0);
 
-    printf("With weights and grid and high temperature and seed.\n");
+    printf("With weights, bounds, high temperature and seed.\n");
     matrix_init_real_row_major(&result, 10, 2, seed);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 1,
-                  /*niter*/ 10, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 0, IGRAPH_LAYOUT_GRID,
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 1,
+                  /*maxiter*/ 10,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.1,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-6,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
                   &weights, &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 1.0);
     igraph_destroy(&g);
@@ -119,25 +171,43 @@ int main(void) {
     printf("Full graph of 5 vertices, seed and no iterations:\n");
     igraph_full(&g, 5, 0, 0);
     matrix_init_real_row_major(&result, 5, 2, seed);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 1,
-                  /*niter*/ 0, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 1e-4, IGRAPH_LAYOUT_GRID,
-                  /*weight*/ NULL, /*minx*/ NULL, /*maxx*/ NULL, /*miny*/ NULL,
-                  /*maxy*/ NULL) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 1,
+                  /*maxiter*/ 0,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.05,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-4,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
+                  /*weights*/ NULL,
+                  /*minx*/ NULL, /*maxx*/ NULL,
+                  /*miny*/ NULL, /*maxy*/ NULL) == IGRAPH_SUCCESS);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
     destroy_bounds(bounds);
     igraph_vector_destroy(&weights);
 
-    printf("Test with grid (large graph):\n");
+    printf("Test with Barnes-Hut (large graph):\n");
     igraph_erdos_renyi_game_gnm(&g, /*n*/ 500, /*m*/ 1000, /*directed*/ false, IGRAPH_SIMPLE_SW, /*edge_labeled*/ false);
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 10, /*relative_strength*/ 0.2, /*step_ratio*/ 0.95,
-                  /*convergence_threshold*/ 0, IGRAPH_LAYOUT_GRID,
-                  /*weight*/ NULL, /*minx*/ NULL, /*maxx*/ NULL, /*miny*/ NULL,
-                  /*maxy*/ NULL) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_layout_yifan_hu(&g, &result,
+                  /*use_seed*/ 0,
+                  /*maxiter*/ 10,
+                  /*repulsive_exponent*/ -1.0,
+                  /*natural_length*/ 1.0,
+                  /*step*/ 0.1,
+                  /*adaptive_cooling*/ 1,
+                  /*tolerance*/ 1e-6,
+                  /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
+                  /*max_qtree_level*/ 10,
+                  /*beautify_leaves*/ 0,
+                  /*weights*/ NULL,
+                  /*minx*/ NULL, /*maxx*/ NULL,
+                  /*miny*/ NULL, /*maxy*/ NULL) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 50.0);
     igraph_destroy(&g);
 

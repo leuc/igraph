@@ -273,6 +273,23 @@ typedef enum {
     IGRAPH_LPA_FAST           /* Sample from dominant labels, only check neighbors. */
 } igraph_lpa_variant_t;
 
+typedef enum {
+    IGRAPH_QUADTREE_NORMAL = 0,
+    IGRAPH_QUADTREE_FAST,
+    IGRAPH_QUADTREE_HYBRID,
+    IGRAPH_QUADTREE_NONE
+} igraph_quadtree_scheme_t;
+
+#define IGRAPH_YIFAN_HU_DEFAULT_P (-1.0)
+#define IGRAPH_YIFAN_HU_DEFAULT_K (-1.0)
+#define IGRAPH_YIFAN_HU_DEFAULT_STEP 0.1
+#define IGRAPH_YIFAN_HU_DEFAULT_TOL 0.001
+#define IGRAPH_YIFAN_HU_DEFAULT_MAXITER 500
+#define IGRAPH_YIFAN_HU_C 0.2
+#define IGRAPH_YIFAN_HU_BH 0.6
+#define IGRAPH_YIFAN_HU_COOL 0.9
+#define IGRAPH_YIFAN_HU_QUADTREE_SIZE 45
+
 IGRAPH_END_C_DECLS
 
 #endif
