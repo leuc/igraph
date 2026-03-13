@@ -268,6 +268,43 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_davidson_harel(const igraph_t *graph,
                                                igraph_real_t weight_edge_crossings,
                                                igraph_real_t weight_node_edge_dist);
 
+
+/**
+ * \ingroup layout
+ * \function igraph_layout_forceatlas2
+ * \brief Places the vertices in 2D using the ForceAtlas2 algorithm.
+ */
+IGRAPH_EXPORT igraph_error_t igraph_layout_forceatlas2(
+        const igraph_t *graph, igraph_matrix_t *res,
+        igraph_integer_t iterations,
+        igraph_bool_t outbound_attraction_distribution,
+        igraph_real_t edge_weight_influence,
+        igraph_real_t jitter_tolerance,
+        igraph_bool_t barnes_hut_optimize,
+        igraph_real_t barnes_hut_theta,
+        igraph_real_t scaling_ratio,
+        igraph_bool_t strong_gravity_mode,
+        igraph_real_t gravity,
+        const igraph_vector_t *weights);
+
+/**
+ * \ingroup layout
+ * \function igraph_layout_forceatlas2_3d
+ * \brief Places the vertices in 3D using the ForceAtlas2 algorithm.
+ */
+IGRAPH_EXPORT igraph_error_t igraph_layout_forceatlas2_3d(
+        const igraph_t *graph, igraph_matrix_t *res,
+        igraph_integer_t iterations,
+        igraph_bool_t outbound_attraction_distribution,
+        igraph_real_t edge_weight_influence,
+        igraph_real_t jitter_tolerance,
+        igraph_bool_t barnes_hut_optimize,
+        igraph_real_t barnes_hut_theta,
+        igraph_real_t scaling_ratio,
+        igraph_bool_t strong_gravity_mode,
+        igraph_real_t gravity,
+        const igraph_vector_t *weights);
+
 /**
  * \typedef igraph_root_choice_t
  * \brief Root choice heuristic for tree visualizations.
