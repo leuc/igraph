@@ -1025,6 +1025,7 @@ add_benchmarks(
   igraph_delaunay_graph
   igraph_distances
   igraph_ecc
+  igraph_forceatlas2
   igraph_hamming
   igraph_induced_subgraph
   igraph_induced_subgraph_edges

@@ -220,6 +220,7 @@ add_library(
   layout/drl/drl_layout.cpp
   layout/drl/drl_layout_3d.cpp
   layout/fruchterman_reingold.c
+  layout/forceatlas2.c
   layout/gem.c
   layout/graphopt.c
   layout/kamada_kawai.c
@@ -422,6 +423,11 @@ endif()
 
 if(PLFIT_LIBRARIES)
   target_link_libraries(igraph PRIVATE ${PLFIT_LIBRARIES})
+endif()
+
+# Enable OpenMP for ForceAtlas2
+if(IGRAPH_OPENMP_SUPPORT)
+  target_link_libraries(igraph PRIVATE OpenMP::OpenMP_C)
 endif()
 
 # Link igraph statically to some of the libraries from the subdirectories
