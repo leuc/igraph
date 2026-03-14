@@ -153,9 +153,12 @@ static igraph_error_t igraph_i_simplify_sorted_int_adjacency_vector_in_place(
 igraph_error_t igraph_adjlist_init(const igraph_t *graph, igraph_adjlist_t *al,
                         igraph_neimode_t mode, igraph_loops_t loops,
                         igraph_bool_t multiple) {
+
     igraph_int_t no_of_nodes = igraph_vcount(graph);
     igraph_vector_int_t degrees;
     int iter = 0;
+
+    multiple = !!multiple; /* normalize Boolean value to enable == comparisons below */
 
     if (mode != IGRAPH_IN && mode != IGRAPH_OUT && mode != IGRAPH_ALL) {
         IGRAPH_ERROR("Cannot create adjacency list view.", IGRAPH_EINVMODE);
@@ -177,7 +180,17 @@ igraph_error_t igraph_adjlist_init(const igraph_t *graph, igraph_adjlist_t *al,
     /* if we already know there are no multi-edges, they don't need to be removed */
     if (igraph_i_property_cache_has(graph, IGRAPH_PROP_HAS_MULTI) &&
         !igraph_i_property_cache_get_bool(graph, IGRAPH_PROP_HAS_MULTI)) {
-        multiple = IGRAPH_MULTIPLE;
+
+        /* special case: if the graph is directed, but we are ignoring edge directions,
+         * mutual edges also act as multi-edges */
+        if (igraph_is_directed(graph) && mode == IGRAPH_ALL) {
+            if (igraph_i_property_cache_has(graph, IGRAPH_PROP_HAS_MUTUAL) &&
+                !igraph_i_property_cache_get_bool(graph, IGRAPH_PROP_HAS_MUTUAL)) {
+                multiple = IGRAPH_MULTIPLE;
+            }
+        } else {
+            multiple = IGRAPH_MULTIPLE;
+        }
     }
 
     /* if we already know there are no loops, they don't need to be removed */
@@ -206,29 +219,33 @@ igraph_error_t igraph_adjlist_init(const igraph_t *graph, igraph_adjlist_t *al,
         IGRAPH_CHECK(igraph_neighbors(graph, &al->adjs[i], i, mode, IGRAPH_LOOPS, IGRAPH_MULTIPLE));
 
         /* Attention: This function will only set values for has_loops and has_multiple
-         * if it finds loops/multi-edges. Otherwise they are left at their original value. */
+         * if it finds loops/multi-edges. Otherwise, they are left at their original value. */
         IGRAPH_CHECK(igraph_i_simplify_sorted_int_adjacency_vector_in_place(
             &al->adjs[i], i, mode, loops, multiple, &has_loops, &has_multiple
         ));
     }
     if (has_loops) {
-        /* If we have found at least one loop above, set the cache to true */
+        /* If we have found at least one loop above, set the cache to true. */
         igraph_i_property_cache_set_bool_checked(graph, IGRAPH_PROP_HAS_LOOP, true);
     } else if (loops == IGRAPH_NO_LOOPS) {
         /* If we explicitly _checked_ for loops (to remove them) and haven't
          * found one, set the cache to false. This is the only case when a
          * definite "no" from has_loops really means that there are no loops at
-         * all */
+         * all. */
         igraph_i_property_cache_set_bool_checked(graph, IGRAPH_PROP_HAS_LOOP, false);
     }
     if (has_multiple) {
-        /* If we have found at least one multiedge above, set the cache to true */
-        igraph_i_property_cache_set_bool_checked(graph, IGRAPH_PROP_HAS_MULTI, true);
+        /* If we have found at least one multiedge above, set the cache to true,
+         * except when treating a directed graph as undirected. In that case, mutual
+         * edges would also look like multi-edges in this check. */
+        if (! igraph_is_directed(graph) || mode != IGRAPH_ALL) {
+            igraph_i_property_cache_set_bool_checked(graph, IGRAPH_PROP_HAS_MULTI, true);
+        }
     } else if (multiple == IGRAPH_NO_MULTIPLE) {
         /* If we explicitly _checked_ for multi-edges (to remove them) and
          * haven't found one, set the cache to false. This is the only case
          * when a definite "no" from has_multiple really means that there are
-         * no multi-edges at all all */
+         * no multi-edges at all. */
         igraph_i_property_cache_set_bool_checked(graph, IGRAPH_PROP_HAS_MULTI, false);
     }
 
@@ -859,8 +876,11 @@ static igraph_error_t igraph_i_simplify_sorted_int_adjacency_vector_in_place(
     if (has_multiple == NULL) {
         has_multiple = &dummy2;
     }
+
     igraph_int_t i, p = 0;
     igraph_int_t n = igraph_vector_int_size(v);
+
+    multiple = !!multiple; /* normalize Boolean value to enable == comparisons below */
 
     if (
         multiple == IGRAPH_MULTIPLE &&
@@ -1059,7 +1079,17 @@ igraph_error_t igraph_lazy_adjlist_init(const igraph_t *graph,
     /* if we already know there are no multi-edges, they don't need to be removed */
     if (igraph_i_property_cache_has(graph, IGRAPH_PROP_HAS_MULTI) &&
         !igraph_i_property_cache_get_bool(graph, IGRAPH_PROP_HAS_MULTI)) {
-        multiple = IGRAPH_MULTIPLE;
+
+        /* special case: if the graph is directed, but we are ignoring edge directions,
+         * mutual edges also act as multi-edges */
+        if (igraph_is_directed(graph) && mode == IGRAPH_ALL) {
+            if (igraph_i_property_cache_has(graph, IGRAPH_PROP_HAS_MUTUAL) &&
+                !igraph_i_property_cache_get_bool(graph, IGRAPH_PROP_HAS_MUTUAL)) {
+                multiple = IGRAPH_MULTIPLE;
+            }
+        } else {
+            multiple = IGRAPH_MULTIPLE;
+        }
     }
 
     /* if we already know there are no loops, they don't need to be removed */
@@ -1086,7 +1116,7 @@ igraph_error_t igraph_lazy_adjlist_init(const igraph_t *graph,
 
 /**
  * \function igraph_lazy_adjlist_destroy
- * \brief Deallocate a lazt adjacency list.
+ * \brief Deallocate a lazy adjacency list.
  *
  * Free all allocated memory for a lazy adjacency list.
  * \param al The adjacency list to deallocate.

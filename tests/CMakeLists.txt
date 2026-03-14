@@ -267,6 +267,7 @@ add_examples(
   igraph_has_multiple
   igraph_is_loop
   igraph_is_multiple
+  igraph_is_triangle_free
   igraph_list_triangles
   igraph_avg_nearest_neighbor_degree
   igraph_minimum_spanning_tree
@@ -328,6 +329,7 @@ add_legacy_tests(
   igraph_get_shortest_paths_dijkstra
   igraph_graph_center
   igraph_has_mutual
+  igraph_is_acyclic
   igraph_is_bipartite
   igraph_is_connected
   igraph_is_chordal
@@ -338,9 +340,10 @@ add_legacy_tests(
   igraph_is_tree
   igraph_is_forest
   igraph_is_forest2
+  igraph_is_simple
+  igraph_is_triangle_free
   igraph_joint_degree_distribution
   igraph_joint_type_distribution
-  igraph_is_acyclic
   igraph_list_triangles
   igraph_local_scan_k_ecount
   igraph_local_scan_k_ecount_them
@@ -565,6 +568,7 @@ add_legacy_tests(
   igraph_power_law_fit
   overflow
   prop_caching
+  prop_caching_adjlist
   zapsmall
 )
 # igraph_power_law_fit() output is only deterministic when running with 1 thread
@@ -937,6 +941,12 @@ add_legacy_tests(
   igraph_spatial_edge_lengths
 )
 
+# barnes hut quadtree
+add_legacy_tests(
+  FOLDER tests/unit NAMES
+  igraph_barnes_hut
+)
+
 
 # cycle bases
 add_legacy_tests(
@@ -1009,6 +1019,7 @@ add_benchmarks(
   graphicality
   igraph_adjacency
   igraph_average_path_length_unweighted
+  igraph_barnes_hut
   beta_skeletons
   igraph_betweenness
   igraph_betweenness_weighted
