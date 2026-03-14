@@ -23,6 +23,7 @@
 #include "igraph_memory.h"
 #include "core/math.h"
 #include "core/interruption.h"
+#include "core/barnes_hut.h"
 #include <stdlib.h>
 
 #ifdef _OPENMP
@@ -37,141 +38,30 @@ typedef struct {
     igraph_real_t *mass;
 } fa2_soa_t;
 
-/* Barnes-Hut OctTree Node */
 typedef struct {
-    igraph_real_t mass;
-    igraph_real_t mass_cx, mass_cy, mass_cz;
-    igraph_real_t size;
-    igraph_integer_t sub[8];   /* Up to 8 children for 3D OctTree */
-    igraph_integer_t node_id;
-} bh_node_t;
+    igraph_real_t scaling_ratio;
+    igraph_bool_t is_3d;
+    fa2_soa_t *nodes;
+} fa2_bh_data_t;
 
-typedef struct {
-    bh_node_t *nodes;
-    igraph_integer_t capacity;
-    igraph_integer_t count;
-} bh_tree_t;
+static void fa2_repulsive_force(
+    const igraph_bh_point_t *p1,
+    const igraph_bh_point_t *p2,
+    igraph_real_t *force,
+    void *user_data
+) {
+    fa2_bh_data_t *data = (fa2_bh_data_t *)user_data;
 
-/* Recursive in-place OctTree builder */
-static igraph_integer_t build_bh_tree(bh_tree_t *tree, igraph_integer_t *indices, igraph_integer_t *temp, igraph_integer_t len, fa2_soa_t *nodes, igraph_bool_t is_3d) {
-    if (len == 0) return -1;
+    igraph_real_t xDist = data->nodes->x[p1->id] - data->nodes->x[p2->id];
+    igraph_real_t yDist = data->nodes->y[p1->id] - data->nodes->y[p2->id];
+    igraph_real_t zDist = data->is_3d ? (data->nodes->z[p1->id] - data->nodes->z[p2->id]) : 0.0;
+    igraph_real_t dist2 = xDist*xDist + yDist*yDist + zDist*zDist;
 
-    igraph_integer_t node_ptr = tree->count++;
-    if (tree->count > tree->capacity) {
-        tree->capacity *= 2;
-        tree->nodes = (bh_node_t*) realloc(tree->nodes, tree->capacity * sizeof(bh_node_t));
-    }
-    bh_node_t *n = &tree->nodes[node_ptr];
-
-    if (len == 1) {
-        igraph_integer_t idx = indices[0];
-        n->node_id = idx;
-        n->mass = nodes->mass[idx];
-        n->mass_cx = nodes->x[idx];
-        n->mass_cy = nodes->y[idx];
-        n->mass_cz = is_3d ? nodes->z[idx] : 0.0;
-        n->size = 0.0;
-        for(int i=0; i<8; ++i) n->sub[i] = -1;
-        return node_ptr;
-    }
-
-    n->node_id = -1;
-    igraph_real_t mass = 0, cx = 0, cy = 0, cz = 0;
-
-    for (igraph_integer_t i = 0; i < len; i++) {
-        igraph_integer_t idx = indices[i];
-        igraph_real_t m = nodes->mass[idx];
-        mass += m;
-        cx += nodes->x[idx] * m;
-        cy += nodes->y[idx] * m;
-        if (is_3d) cz += nodes->z[idx] * m;
-    }
-    cx /= mass; cy /= mass; if (is_3d) cz /= mass;
-
-    igraph_real_t max_dist = 0;
-    for (igraph_integer_t i = 0; i < len; i++) {
-        igraph_integer_t idx = indices[i];
-        igraph_real_t dx = nodes->x[idx] - cx;
-        igraph_real_t dy = nodes->y[idx] - cy;
-        igraph_real_t dz = is_3d ? (nodes->z[idx] - cz) : 0.0;
-        igraph_real_t dist = sqrt(dx*dx + dy*dy + dz*dz);
-        if (dist > max_dist) max_dist = dist;
-    }
-
-    n->mass = mass; n->mass_cx = cx; n->mass_cy = cy; n->mass_cz = cz;
-    n->size = 2.0 * max_dist;
-
-    igraph_integer_t q_counts[8] = {0};
-    for(igraph_integer_t i = 0; i < len; i++) {
-        igraph_integer_t idx = indices[i];
-        igraph_integer_t octant = 0;
-        if (nodes->x[idx] >= cx) octant |= 1;
-        if (nodes->y[idx] >= cy) octant |= 2;
-        if (is_3d && nodes->z[idx] >= cz) octant |= 4;
-        q_counts[octant]++;
-    }
-
-    igraph_integer_t offsets[8] = {0};
-    igraph_integer_t cursors[8] = {0};
-    for(int i=1; i<8; i++) offsets[i] = offsets[i-1] + q_counts[i-1];
-    for(int i=0; i<8; i++) cursors[i] = offsets[i];
-
-    for(igraph_integer_t i = 0; i < len; i++) {
-        igraph_integer_t idx = indices[i];
-        igraph_integer_t octant = 0;
-        if (nodes->x[idx] >= cx) octant |= 1;
-        if (nodes->y[idx] >= cy) octant |= 2;
-        if (is_3d && nodes->z[idx] >= cz) octant |= 4;
-        temp[cursors[octant]++] = idx;
-    }
-
-    for(igraph_integer_t i = 0; i < len; i++) indices[i] = temp[i];
-
-    igraph_integer_t subs[8];
-    for(int i=0; i<8; i++) {
-        subs[i] = build_bh_tree(tree, indices + offsets[i], temp + offsets[i], q_counts[i], nodes, is_3d);
-    }
-
-    n = &tree->nodes[node_ptr];
-    for(int i=0; i<8; i++) n->sub[i] = subs[i];
-
-    return node_ptr;
-}
-
-/* Recursive Force Application */
-static void apply_bh_force(bh_tree_t *tree, igraph_integer_t node_id, igraph_integer_t target_idx, fa2_soa_t *nodes, igraph_real_t theta, igraph_real_t scaling_ratio, igraph_bool_t is_3d, igraph_real_t *local_dx, igraph_real_t *local_dy, igraph_real_t *local_dz) {
-    if (node_id < 0) return;
-    bh_node_t *r = &tree->nodes[node_id];
-
-    if (r->node_id >= 0) {
-        if (r->node_id != target_idx) {
-            igraph_real_t xDist = nodes->x[target_idx] - r->mass_cx;
-            igraph_real_t yDist = nodes->y[target_idx] - r->mass_cy;
-            igraph_real_t zDist = is_3d ? (nodes->z[target_idx] - r->mass_cz) : 0.0;
-            igraph_real_t dist2 = xDist*xDist + yDist*yDist + zDist*zDist;
-            if (dist2 > 0) {
-                igraph_real_t factor = scaling_ratio * nodes->mass[target_idx] * r->mass / dist2;
-                *local_dx += xDist * factor;
-                *local_dy += yDist * factor;
-                if (is_3d) *local_dz += zDist * factor;
-            }
-        }
-    } else {
-        igraph_real_t xDist = nodes->x[target_idx] - r->mass_cx;
-        igraph_real_t yDist = nodes->y[target_idx] - r->mass_cy;
-        igraph_real_t zDist = is_3d ? (nodes->z[target_idx] - r->mass_cz) : 0.0;
-        igraph_real_t dist = sqrt(xDist*xDist + yDist*yDist + zDist*zDist);
-
-        if (dist * theta > r->size) {
-            if (dist > 0) {
-                igraph_real_t factor = scaling_ratio * nodes->mass[target_idx] * r->mass / (dist*dist);
-                *local_dx += xDist * factor;
-                *local_dy += yDist * factor;
-                if (is_3d) *local_dz += zDist * factor;
-            }
-        } else {
-            for (int i=0; i<8; i++) apply_bh_force(tree, r->sub[i], target_idx, nodes, theta, scaling_ratio, is_3d, local_dx, local_dy, local_dz);
-        }
+    if (dist2 > 0) {
+        igraph_real_t factor = data->scaling_ratio * p1->mass * p2->mass / dist2;
+        force[0] = xDist * factor;
+        force[1] = yDist * factor;
+        if (data->is_3d) force[2] = zDist * factor;
     }
 }
 
@@ -229,14 +119,29 @@ static igraph_error_t igraph_i_layout_forceatlas2(
 
     if (outbound_attraction_distribution && no_of_nodes > 0) outbound_att_comp = total_mass / no_of_nodes;
 
-    bh_tree_t tree = {0};
-    igraph_integer_t *bh_indices = NULL, *bh_temp = NULL;
+    igraph_bh_tree_t tree = {0};
+    igraph_matrix_t coords;
+    igraph_vector_t masses;
+    igraph_matrix_t forces;
+
     if (barnes_hut_optimize) {
-        tree.capacity = no_of_nodes * (is_3d ? 8 : 4);
-        tree.nodes = IGRAPH_MALLOC((size_t)tree.capacity * sizeof(bh_node_t));
-        bh_indices = IGRAPH_MALLOC((size_t)no_of_nodes * sizeof(igraph_integer_t));
-        bh_temp = IGRAPH_MALLOC((size_t)no_of_nodes * sizeof(igraph_integer_t));
+        IGRAPH_CHECK(igraph_matrix_init(&coords, no_of_nodes, is_3d ? 3 : 2));
+        IGRAPH_FINALLY(igraph_matrix_destroy, &coords);
+        IGRAPH_CHECK(igraph_vector_init(&masses, no_of_nodes));
+        IGRAPH_FINALLY(igraph_vector_destroy, &masses);
+        IGRAPH_CHECK(igraph_matrix_init(&forces, no_of_nodes, is_3d ? 3 : 2));
+        IGRAPH_FINALLY(igraph_matrix_destroy, &forces);
+        IGRAPH_CHECK(igraph_bh_tree_init(&tree, is_3d ? 3 : 2, barnes_hut_theta, 20, 1));
+        IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
+    } else {
+        IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
     }
+
+    fa2_bh_data_t bh_data = {
+        .scaling_ratio = scaling_ratio,
+        .is_3d = is_3d,
+        .nodes = &nodes
+    };
 
     for (iter = 0; iter < iterations; iter++) {
         IGRAPH_PROGRESS("ForceAtlas2: ",  (100.0 * iter) / iterations, 0);
@@ -255,17 +160,21 @@ static igraph_error_t igraph_i_layout_forceatlas2(
 
         /* Repulsion Forces */
         if (barnes_hut_optimize) {
-            tree.count = 0;
-            for(i = 0; i < no_of_nodes; i++) bh_indices[i] = i;
-            igraph_integer_t root = build_bh_tree(&tree, bh_indices, bh_temp, no_of_nodes, &nodes, is_3d);
-
-            #pragma omp parallel for schedule(dynamic, 64)
             for (i = 0; i < no_of_nodes; i++) {
-                igraph_real_t local_dx = 0.0, local_dy = 0.0, local_dz = 0.0;
-                apply_bh_force(&tree, root, i, &nodes, barnes_hut_theta, scaling_ratio, is_3d, &local_dx, &local_dy, &local_dz);
-                nodes.dx[i] += local_dx;
-                nodes.dy[i] += local_dy;
-                if (is_3d) nodes.dz[i] += local_dz;
+                MATRIX(coords, i, 0) = nodes.x[i];
+                MATRIX(coords, i, 1) = nodes.y[i];
+                if (is_3d) MATRIX(coords, i, 2) = nodes.z[i];
+                VECTOR(masses)[i] = nodes.mass[i];
+            }
+
+            IGRAPH_CHECK(igraph_bh_tree_build(&tree, &coords, &masses));
+
+            IGRAPH_CHECK(igraph_bh_calculate_repulsive_forces(&tree, &forces, fa2_repulsive_force, &bh_data));
+
+            for (i = 0; i < no_of_nodes; i++) {
+                nodes.dx[i] = MATRIX(forces, i, 0);
+                nodes.dy[i] = MATRIX(forces, i, 1);
+                if (is_3d) nodes.dz[i] = MATRIX(forces, i, 2);
             }
         } else {
             #pragma omp parallel for schedule(dynamic, 64)
@@ -409,9 +318,7 @@ static igraph_error_t igraph_i_layout_forceatlas2(
     }
 
     if (barnes_hut_optimize) {
-        IGRAPH_FREE(tree.nodes);
-        IGRAPH_FREE(bh_indices);
-        IGRAPH_FREE(bh_temp);
+        igraph_bh_tree_destroy(&tree);
     }
 
     IGRAPH_FREE(nodes.x); IGRAPH_FREE(nodes.y); IGRAPH_FREE(nodes.dx); IGRAPH_FREE(nodes.dy);
