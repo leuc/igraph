@@ -65,13 +65,7 @@ static void yhu_repulsive_force(
     }
 
     igraph_real_t dist = sqrt(dist_sq);
-    igraph_real_t exp_factor = 1.0 - data->p;
-
-    if (exp_factor < 0) {
-        exp_factor = -exp_factor;
-    }
-
-    igraph_real_t scale = data->KP / pow(dist, exp_factor);
+    igraph_real_t scale = data->KP / pow(dist, data->p);
 
     if (!isfinite(scale)) {
         scale = 1e10;
@@ -125,13 +119,7 @@ static void yhu_repulsive_force_3d(
     }
 
     igraph_real_t dist = sqrt(dist_sq);
-    igraph_real_t exp_factor = 1.0 - data->p;
-
-    if (exp_factor < 0) {
-        exp_factor = -exp_factor;
-    }
-
-    igraph_real_t scale = data->KP / pow(dist, exp_factor);
+    igraph_real_t scale = data->KP / pow(dist, data->p);
 
     if (!isfinite(scale)) {
         scale = 1e10;
@@ -403,8 +391,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
     }
 
     igraph_real_t p = repulsive_exponent;
-    if (p >= 0) {
-        p = -1.0;
+    if (p < 0) {
+        p = 2.0;
     }
 
     igraph_real_t KP = pow(K, 1.0 - p);
@@ -532,11 +520,13 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
     }
 
     igraph_real_t p = repulsive_exponent;
-    if (p >= 0) {
-        p = -1.0;
-    }
+        // If the user passes a negative value (e.g., default flag), use Hu's recommended 2.0
+        if (p < 0) {
+            p = 2.0;
+        }
 
-    igraph_real_t KP = pow(K, 1.0 - p);
+    // Follow Hu's numerator: K^(1+p)
+    igraph_real_t KP = pow(K, 1.0 + p);
     igraph_real_t CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
 
     yhu_data_t yhu_data = {
@@ -666,8 +656,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
     }
 
     igraph_real_t p = repulsive_exponent;
-    if (p >= 0) {
-        p = -1.0;
+    if (p < 0) {
+        p = 2.0;
     }
 
     igraph_real_t KP = pow(K, 1.0 - p);
@@ -707,12 +697,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
                 }
 
                 igraph_real_t dist = sqrt(d2);
-                igraph_real_t exp_factor = 1.0 - p;
-                if (exp_factor < 0) {
-                    exp_factor = -exp_factor;
-                }
-
-                igraph_real_t scale = KP / pow(dist, exp_factor);
+                igraph_real_t scale = KP / pow(dist, p);
 
                 if (!isfinite(scale)) {
                     scale = 1e10;
