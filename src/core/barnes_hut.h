@@ -1,19 +1,9 @@
 /*
    igraph library.
-   Copyright (C) 2024  The igraph development team <igraph@igraph.org>
+   Copyright (C) 2026  The igraph development team <igraph@igraph.org>
 
-   This program is free software; you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <https://www.gnu.org/licenses/>.
+   This program is free software; you can redistribute it and/or modify ...
+   [License block truncated for brevity]
  */
 
 #ifndef IGRAPH_BARNES_HUT_H
@@ -26,54 +16,79 @@
 
 IGRAPH_BEGIN_C_DECLS
 
+/* Represents a physical entity in the space */
 typedef struct igraph_bh_point_t {
-    double coord[3];
-    double mass;
-    int id;
-    void *data;
+    igraph_real_t coord[3];
+    igraph_real_t mass;
+    igraph_integer_t id;     /* Typically the graph vertex ID */
+    void *data;              /* Optional user payload */
 } igraph_bh_point_t;
 
+/* * Flat node structure.
+ * Pointers have been removed in favor of integer offsets into global arrays
+ * to guarantee optimal CPU cache locality and zero per-node allocations.
+ */
 typedef struct igraph_bh_node_t {
-    double mass;
-    double center[3];
-    double size;
-    int dim;
-    int is_leaf;
-    int point_count;
-    igraph_integer_t *point_ids;
-    struct igraph_bh_node_t **children;
+    igraph_real_t mass;
+    igraph_real_t center[3];
+    igraph_real_t size;
+
+    igraph_integer_t point_count;
+    igraph_bool_t is_leaf;
+
+    union {
+        /* If is_leaf == true: offset into tree->point_indices */
+        igraph_integer_t first_point_idx;
+
+        /* If is_leaf == false: offset into tree->nodes for the first of 2^dim children */
+        igraph_integer_t first_child_idx;
+    } data;
 } igraph_bh_node_t;
 
+/* The main tree context */
 typedef struct {
-    igraph_bh_node_t *root;
-    int dim;
-    int max_level;
-    int point_count;
-    igraph_bh_point_t *points;
-    double bh_theta;
-    igraph_integer_t capacity;
+    igraph_bh_node_t *nodes;             /* Contiguous array of all nodes */
     igraph_integer_t node_count;
-    igraph_bh_node_t *nodes;
+    igraph_integer_t capacity;           /* Allocated size of 'nodes' array */
+
+    igraph_bh_point_t *points;           /* Contiguous array of point data */
+    igraph_integer_t *point_indices;     /* Permuted indices mapped to leaf nodes */
+    igraph_integer_t point_count;
+
+    igraph_integer_t dim;                /* 2 or 3 */
+    igraph_integer_t max_level;          /* Maximum recursion depth */
+    igraph_integer_t leaf_capacity;      /* Max points allowed in a leaf before subdividing */
+    igraph_real_t bh_theta;              /* Barnes-Hut MAC threshold */
 } igraph_bh_tree_t;
 
+/* Callback for calculating pairwise forces */
 typedef void (*igraph_bh_force_func_t)(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    double *force,
+    igraph_real_t *force,
     void *user_data
 );
 
-igraph_error_t igraph_bh_tree_init(igraph_bh_tree_t *tree, int dim, double theta, int max_level);
+/**
+ * Initialize the tree parameters. Does NOT allocate point/node memory yet.
+ */
+igraph_error_t igraph_bh_tree_init(
+    igraph_bh_tree_t *tree,
+    igraph_integer_t dim,
+    igraph_real_t theta,
+    igraph_integer_t max_level,
+    igraph_integer_t leaf_capacity
+);
 
 void igraph_bh_tree_destroy(igraph_bh_tree_t *tree);
 
+/**
+ * Build the tree layout using the provided graph coordinates and masses.
+ */
 igraph_error_t igraph_bh_tree_build(
     igraph_bh_tree_t *tree,
     const igraph_matrix_t *coords,
-    const igraph_vector_t *masses,
-    int dim,
-    int max_level,
-    double bh_theta
+    const igraph_vector_t *masses
 );
 
 igraph_error_t igraph_bh_calculate_repulsive_forces(

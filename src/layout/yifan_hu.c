@@ -420,7 +420,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
     };
 
     igraph_bh_tree_t tree;
-    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 3, IGRAPH_YHU_BH, (int)max_qtree_level));
+    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 3, IGRAPH_YHU_BH, (int)max_qtree_level, 1));
     IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
 
     igraph_vector_int_t from, to;
@@ -437,7 +437,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
 
-        IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL, 3, (int)max_qtree_level, IGRAPH_YHU_BH));
+        IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
         igraph_matrix_t forces;
         IGRAPH_CHECK(igraph_matrix_init(&forces, vcount, 3));
@@ -548,7 +548,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
     };
 
     igraph_bh_tree_t tree;
-    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 2, IGRAPH_YHU_BH, (int)max_qtree_level));
+    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 2, IGRAPH_YHU_BH, (int)max_qtree_level, 1));
     IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
 
     igraph_vector_int_t from, to;
@@ -565,7 +565,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
 
-        IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL, 2, (int)max_qtree_level, IGRAPH_YHU_BH));
+        IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
         igraph_matrix_t forces;
         IGRAPH_CHECK(igraph_matrix_init(&forces, vcount, 2));
