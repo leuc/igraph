@@ -120,9 +120,9 @@ static igraph_error_t igraph_i_layout_forceatlas2(
     if (outbound_attraction_distribution && no_of_nodes > 0) outbound_att_comp = total_mass / no_of_nodes;
 
     igraph_bh_tree_t tree = {0};
-    igraph_matrix_t coords;
-    igraph_vector_t masses;
-    igraph_matrix_t forces;
+    igraph_matrix_t coords = {0};
+    igraph_vector_t masses = {0};
+    igraph_matrix_t forces = {0};
 
     if (barnes_hut_optimize) {
         IGRAPH_CHECK(igraph_matrix_init(&coords, no_of_nodes, is_3d ? 3 : 2));
@@ -135,6 +135,9 @@ static igraph_error_t igraph_i_layout_forceatlas2(
         IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
     } else {
         IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
+        IGRAPH_FINALLY(igraph_matrix_destroy, &forces);
+        IGRAPH_FINALLY(igraph_vector_destroy, &masses);
+        IGRAPH_FINALLY(igraph_matrix_destroy, &coords);
     }
 
     fa2_bh_data_t bh_data = {
@@ -317,15 +320,13 @@ static igraph_error_t igraph_i_layout_forceatlas2(
         if (is_3d) MATRIX(*res, i, 2) = nodes.z[i];
     }
 
-    if (barnes_hut_optimize) {
-        igraph_bh_tree_destroy(&tree);
-    }
+    /* Cleanup handled by IGRAPH_FINALLY - do not call manually */
 
     IGRAPH_FREE(nodes.x); IGRAPH_FREE(nodes.y); IGRAPH_FREE(nodes.dx); IGRAPH_FREE(nodes.dy);
     IGRAPH_FREE(nodes.old_dx); IGRAPH_FREE(nodes.old_dy); IGRAPH_FREE(nodes.mass);
     if (is_3d) { IGRAPH_FREE(nodes.z); IGRAPH_FREE(nodes.dz); IGRAPH_FREE(nodes.old_dz); }
     igraph_vector_int_destroy(&degrees);
-    IGRAPH_FINALLY_CLEAN(1);
+    IGRAPH_FINALLY_CLEAN(4);
 
     return IGRAPH_SUCCESS;
 }
