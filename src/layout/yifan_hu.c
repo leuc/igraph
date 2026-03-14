@@ -24,6 +24,7 @@
 #include "igraph_interface.h"
 
 #include "core/barnes_hut.h"
+#include "core/math.h"
 #include "core/interruption.h"
 #include "layout/layout_internal.h"
 
@@ -34,11 +35,11 @@
 #define IGRAPH_YHU_QUADTREE_SIZE 45
 
 typedef struct {
-    double p;
-    double KP;
-    double CRK;
-    double K;
-    int dim;
+    igraph_real_t p;
+    igraph_real_t KP;
+    igraph_real_t CRK;
+    igraph_real_t K;
+    igraph_integer_t dim;
     const igraph_t *graph;
     const igraph_vector_t *weights;
 } yhu_data_t;
@@ -46,7 +47,7 @@ typedef struct {
 static void yhu_repulsive_force(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    double *force,
+    igraph_real_t *force,
     void *user_data
 ) {
     yhu_data_t *data = (yhu_data_t *)user_data;
@@ -55,22 +56,22 @@ static void yhu_repulsive_force(
         return;
     }
 
-    double dx = p1->coord[0] - p2->coord[0];
-    double dy = p1->coord[1] - p2->coord[1];
-    double dist_sq = dx*dx + dy*dy;
+    igraph_real_t dx = p1->coord[0] - p2->coord[0];
+    igraph_real_t dy = p1->coord[1] - p2->coord[1];
+    igraph_real_t dist_sq = dx*dx + dy*dy;
 
     if (dist_sq < 1e-12) {
         return;
     }
 
-    double dist = sqrt(dist_sq);
-    double exp_factor = 1.0 - data->p;
+    igraph_real_t dist = sqrt(dist_sq);
+    igraph_real_t exp_factor = 1.0 - data->p;
 
     if (exp_factor < 0) {
         exp_factor = -exp_factor;
     }
 
-    double scale = data->KP / pow(dist, exp_factor);
+    igraph_real_t scale = data->KP / pow(dist, exp_factor);
 
     if (!isfinite(scale)) {
         scale = 1e10;
@@ -83,20 +84,20 @@ static void yhu_repulsive_force(
 static void yhu_attractive_force(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    double *force,
+    igraph_real_t *force,
     void *user_data
 ) {
     yhu_data_t *data = (yhu_data_t *)user_data;
 
-    double dx = p1->coord[0] - p2->coord[0];
-    double dy = p1->coord[1] - p2->coord[1];
-    double dist = sqrt(dx*dx + dy*dy);
+    igraph_real_t dx = p1->coord[0] - p2->coord[0];
+    igraph_real_t dy = p1->coord[1] - p2->coord[1];
+    igraph_real_t dist = sqrt(dx*dx + dy*dy);
 
     if (dist < 1e-12) {
         return;
     }
 
-    double scale = -data->CRK * dist;
+    igraph_real_t scale = -data->CRK * dist;
 
     force[0] = scale * dx;
     force[1] = scale * dy;
@@ -105,7 +106,7 @@ static void yhu_attractive_force(
 static void yhu_repulsive_force_3d(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    double *force,
+    igraph_real_t *force,
     void *user_data
 ) {
     yhu_data_t *data = (yhu_data_t *)user_data;
@@ -114,23 +115,23 @@ static void yhu_repulsive_force_3d(
         return;
     }
 
-    double dx = p1->coord[0] - p2->coord[0];
-    double dy = p1->coord[1] - p2->coord[1];
-    double dz = p1->coord[2] - p2->coord[2];
-    double dist_sq = dx*dx + dy*dy + dz*dz;
+    igraph_real_t dx = p1->coord[0] - p2->coord[0];
+    igraph_real_t dy = p1->coord[1] - p2->coord[1];
+    igraph_real_t dz = p1->coord[2] - p2->coord[2];
+    igraph_real_t dist_sq = dx*dx + dy*dy + dz*dz;
 
     if (dist_sq < 1e-12) {
         return;
     }
 
-    double dist = sqrt(dist_sq);
-    double exp_factor = 1.0 - data->p;
+    igraph_real_t dist = sqrt(dist_sq);
+    igraph_real_t exp_factor = 1.0 - data->p;
 
     if (exp_factor < 0) {
         exp_factor = -exp_factor;
     }
 
-    double scale = data->KP / pow(dist, exp_factor);
+    igraph_real_t scale = data->KP / pow(dist, exp_factor);
 
     if (!isfinite(scale)) {
         scale = 1e10;
@@ -144,28 +145,28 @@ static void yhu_repulsive_force_3d(
 static void yhu_attractive_force_3d(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    double *force,
+    igraph_real_t *force,
     void *user_data
 ) {
     yhu_data_t *data = (yhu_data_t *)user_data;
 
-    double dx = p1->coord[0] - p2->coord[0];
-    double dy = p1->coord[1] - p2->coord[1];
-    double dz = p1->coord[2] - p2->coord[2];
-    double dist = sqrt(dx*dx + dy*dy + dz*dz);
+    igraph_real_t dx = p1->coord[0] - p2->coord[0];
+    igraph_real_t dy = p1->coord[1] - p2->coord[1];
+    igraph_real_t dz = p1->coord[2] - p2->coord[2];
+    igraph_real_t dist = sqrt(dx*dx + dy*dy + dz*dz);
 
     if (dist < 1e-12) {
         return;
     }
 
-    double scale = -data->CRK * dist;
+    igraph_real_t scale = -data->CRK * dist;
 
     force[0] = scale * dx;
     force[1] = scale * dy;
     force[2] = scale * dz;
 }
 
-static double update_step(igraph_bool_t adaptive_cooling, double step, double Fnorm, double Fnorm0) {
+static igraph_real_t update_step(igraph_bool_t adaptive_cooling, igraph_real_t step, igraph_real_t Fnorm, igraph_real_t Fnorm0) {
     if (!adaptive_cooling) {
         return IGRAPH_YHU_COOL * step;
     }
@@ -182,7 +183,7 @@ static igraph_error_t compute_average_edge_length(
     const igraph_t *graph,
     const igraph_matrix_t *coords,
     const igraph_vector_t *weights,
-    double *avg_len
+    igraph_real_t *avg_len
 ) {
     igraph_integer_t ecount = igraph_ecount(graph);
     if (ecount == 0) {
@@ -190,13 +191,13 @@ static igraph_error_t compute_average_edge_length(
         return IGRAPH_SUCCESS;
     }
 
-    double total_len = 0.0;
+    igraph_real_t total_len = 0.0;
     for (igraph_integer_t e = 0; e < ecount; e++) {
         igraph_integer_t from = IGRAPH_FROM(graph, e);
         igraph_integer_t to = IGRAPH_TO(graph, e);
-        double dx = MATRIX(*coords, from, 0) - MATRIX(*coords, to, 0);
-        double dy = MATRIX(*coords, from, 1) - MATRIX(*coords, to, 1);
-        double w = weights ? VECTOR(*weights)[e] : 1.0;
+        igraph_real_t dx = MATRIX(*coords, from, 0) - MATRIX(*coords, to, 0);
+        igraph_real_t dy = MATRIX(*coords, from, 1) - MATRIX(*coords, to, 1);
+        igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
         total_len += sqrt(dx*dx + dy*dy) * w;
     }
 
@@ -236,10 +237,10 @@ static igraph_error_t beautify_leaves(
             }
 
             if (parent >= 0) {
-                double px = MATRIX(*coords, parent, 0);
-                double py = MATRIX(*coords, parent, 1);
+                igraph_real_t px = MATRIX(*coords, parent, 0);
+                igraph_real_t py = MATRIX(*coords, parent, 1);
 
-                int leaf_count = 0;
+                igraph_integer_t leaf_count = 0;
                 for (igraph_integer_t j = 0; j < vcount; j++) {
                     if (j != parent && VECTOR(degrees)[j] == 1) {
                         for (igraph_integer_t e = 0; e < ecount; e++) {
@@ -254,8 +255,8 @@ static igraph_error_t beautify_leaves(
                 }
 
                 if (leaf_count > 0) {
-                    double angle = 2.0 * 3.14159265358979323846 * (double)i / (double)vcount;
-                    double radius = 5.0;
+                    igraph_real_t angle = 2.0 * M_PI * (igraph_real_t)i / (igraph_real_t)vcount;
+                    igraph_real_t radius = 5.0;
                     MATRIX(*coords, i, 0) = px + radius * cos(angle);
                     MATRIX(*coords, i, 1) = py + radius * sin(angle);
                 }
@@ -273,7 +274,7 @@ static igraph_error_t compute_average_edge_length_3d(
     const igraph_t *graph,
     const igraph_matrix_t *coords,
     const igraph_vector_t *weights,
-    double *avg_len
+    igraph_real_t *avg_len
 ) {
     igraph_integer_t ecount = igraph_ecount(graph);
     if (ecount == 0) {
@@ -281,14 +282,14 @@ static igraph_error_t compute_average_edge_length_3d(
         return IGRAPH_SUCCESS;
     }
 
-    double total_len = 0.0;
+    igraph_real_t total_len = 0.0;
     for (igraph_integer_t e = 0; e < ecount; e++) {
         igraph_integer_t from = IGRAPH_FROM(graph, e);
         igraph_integer_t to = IGRAPH_TO(graph, e);
-        double dx = MATRIX(*coords, from, 0) - MATRIX(*coords, to, 0);
-        double dy = MATRIX(*coords, from, 1) - MATRIX(*coords, to, 1);
-        double dz = MATRIX(*coords, from, 2) - MATRIX(*coords, to, 2);
-        double w = weights ? VECTOR(*weights)[e] : 1.0;
+        igraph_real_t dx = MATRIX(*coords, from, 0) - MATRIX(*coords, to, 0);
+        igraph_real_t dy = MATRIX(*coords, from, 1) - MATRIX(*coords, to, 1);
+        igraph_real_t dz = MATRIX(*coords, from, 2) - MATRIX(*coords, to, 2);
+        igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
         total_len += sqrt(dx*dx + dy*dy + dz*dz) * w;
     }
 
@@ -328,11 +329,11 @@ static igraph_error_t beautify_leaves_3d(
             }
 
             if (parent >= 0) {
-                double px = MATRIX(*coords, parent, 0);
-                double py = MATRIX(*coords, parent, 1);
-                double pz = MATRIX(*coords, parent, 2);
+                igraph_real_t px = MATRIX(*coords, parent, 0);
+                igraph_real_t py = MATRIX(*coords, parent, 1);
+                igraph_real_t pz = MATRIX(*coords, parent, 2);
 
-                int leaf_count = 0;
+                igraph_integer_t leaf_count = 0;
                 for (igraph_integer_t j = 0; j < vcount; j++) {
                     if (j != parent && VECTOR(degrees)[j] == 1) {
                         for (igraph_integer_t e = 0; e < ecount; e++) {
@@ -347,9 +348,9 @@ static igraph_error_t beautify_leaves_3d(
                 }
 
                 if (leaf_count > 0) {
-                    double theta = 2.0 * 3.14159265358979323846 * (double)i / (double)vcount;
-                    double phi = 3.14159265358979323846 * (double)(i % 17) / 17.0;
-                    double radius = 5.0;
+                    igraph_real_t theta = 2.0 * M_PI * (igraph_real_t)i / (igraph_real_t)vcount;
+                    igraph_real_t phi = M_PI * (igraph_real_t)(i % 17) / 17.0;
+                    igraph_real_t radius = 5.0;
                     MATRIX(*coords, i, 0) = px + radius * sin(phi) * cos(theta);
                     MATRIX(*coords, i, 1) = py + radius * sin(phi) * sin(theta);
                     MATRIX(*coords, i, 2) = pz + radius * cos(phi);
@@ -396,18 +397,18 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         }
     }
 
-    double K = natural_length;
+    igraph_real_t K = natural_length;
     if (K < 0) {
         IGRAPH_CHECK(compute_average_edge_length_3d(graph, res, weights, &K));
     }
 
-    double p = repulsive_exponent;
+    igraph_real_t p = repulsive_exponent;
     if (p >= 0) {
         p = -1.0;
     }
 
-    double KP = pow(K, 1.0 - p);
-    double CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
+    igraph_real_t KP = pow(K, 1.0 - p);
+    igraph_real_t CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
 
     yhu_data_t yhu_data = {
         .p = p,
@@ -432,7 +433,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         VECTOR(to)[e] = IGRAPH_TO(graph, e);
     }
 
-    double Fnorm0 = IGRAPH_INFINITY;
+    igraph_real_t Fnorm0 = IGRAPH_INFINITY;
 
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
@@ -447,12 +448,12 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
 
         igraph_bh_calculate_attractive_forces(&tree, &from, &to, weights, &forces, yhu_attractive_force_3d, &yhu_data);
 
-        double Fnorm = 0.0;
+        igraph_real_t Fnorm = 0.0;
         for (igraph_integer_t i = 0; i < vcount; i++) {
-            double fx = MATRIX(forces, i, 0);
-            double fy = MATRIX(forces, i, 1);
-            double fz = MATRIX(forces, i, 2);
-            double fmag = sqrt(fx*fx + fy*fy + fz*fz);
+            igraph_real_t fx = MATRIX(forces, i, 0);
+            igraph_real_t fy = MATRIX(forces, i, 1);
+            igraph_real_t fz = MATRIX(forces, i, 2);
+            igraph_real_t fmag = sqrt(fx*fx + fy*fy + fz*fz);
 
             if (fmag > 1e-12) {
                 MATRIX(forces, i, 0) = fx / fmag;
@@ -525,18 +526,18 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         igraph_i_layout_random_bounded(graph, res, minx, maxx, miny, maxy);
     }
 
-    double K = natural_length;
+    igraph_real_t K = natural_length;
     if (K < 0) {
         IGRAPH_CHECK(compute_average_edge_length(graph, res, weights, &K));
     }
 
-    double p = repulsive_exponent;
+    igraph_real_t p = repulsive_exponent;
     if (p >= 0) {
         p = -1.0;
     }
 
-    double KP = pow(K, 1.0 - p);
-    double CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
+    igraph_real_t KP = pow(K, 1.0 - p);
+    igraph_real_t CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
 
     yhu_data_t yhu_data = {
         .p = p,
@@ -561,7 +562,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         VECTOR(to)[e] = IGRAPH_TO(graph, e);
     }
 
-    double Fnorm0 = IGRAPH_INFINITY;
+    igraph_real_t Fnorm0 = IGRAPH_INFINITY;
 
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
@@ -576,11 +577,11 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
 
         igraph_bh_calculate_attractive_forces(&tree, &from, &to, weights, &forces, yhu_attractive_force, &yhu_data);
 
-        double Fnorm = 0.0;
+        igraph_real_t Fnorm = 0.0;
         for (igraph_integer_t i = 0; i < vcount; i++) {
-            double fx = MATRIX(forces, i, 0);
-            double fy = MATRIX(forces, i, 1);
-            double fmag = sqrt(fx*fx + fy*fy);
+            igraph_real_t fx = MATRIX(forces, i, 0);
+            igraph_real_t fy = MATRIX(forces, i, 1);
+            igraph_real_t fmag = sqrt(fx*fx + fy*fy);
 
             if (fmag > 1e-12) {
                 MATRIX(forces, i, 0) = fx / fmag;
@@ -659,18 +660,18 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
         igraph_i_layout_random_bounded(graph, res, minx, maxx, miny, maxy);
     }
 
-    double K = natural_length;
+    igraph_real_t K = natural_length;
     if (K < 0) {
         IGRAPH_CHECK(compute_average_edge_length(graph, res, weights, &K));
     }
 
-    double p = repulsive_exponent;
+    igraph_real_t p = repulsive_exponent;
     if (p >= 0) {
         p = -1.0;
     }
 
-    double KP = pow(K, 1.0 - p);
-    double CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
+    igraph_real_t KP = pow(K, 1.0 - p);
+    igraph_real_t CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
 
     igraph_vector_t disp_x, disp_y;
     IGRAPH_VECTOR_INIT_FINALLY(&disp_x, vcount);
@@ -685,7 +686,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
         VECTOR(to)[e] = IGRAPH_TO(graph, e);
     }
 
-    double Fnorm0 = IGRAPH_INFINITY;
+    igraph_real_t Fnorm0 = IGRAPH_INFINITY;
 
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
@@ -695,9 +696,9 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
 
         for (igraph_integer_t i = 0; i < vcount; i++) {
             for (igraph_integer_t j = i + 1; j < vcount; j++) {
-                double dx = MATRIX(*res, i, 0) - MATRIX(*res, j, 0);
-                double dy = MATRIX(*res, i, 1) - MATRIX(*res, j, 1);
-                double d2 = dx*dx + dy*dy;
+                igraph_real_t dx = MATRIX(*res, i, 0) - MATRIX(*res, j, 0);
+                igraph_real_t dy = MATRIX(*res, i, 1) - MATRIX(*res, j, 1);
+                igraph_real_t d2 = dx*dx + dy*dy;
 
                 if (d2 == 0) {
                     dx = RNG_UNIF(-1e-9, 1e-9);
@@ -705,13 +706,13 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
                     d2 = dx*dx + dy*dy;
                 }
 
-                double dist = sqrt(d2);
-                double exp_factor = 1.0 - p;
+                igraph_real_t dist = sqrt(d2);
+                igraph_real_t exp_factor = 1.0 - p;
                 if (exp_factor < 0) {
                     exp_factor = -exp_factor;
                 }
 
-                double scale = KP / pow(dist, exp_factor);
+                igraph_real_t scale = KP / pow(dist, exp_factor);
 
                 if (!isfinite(scale)) {
                     scale = 1e10;
@@ -727,15 +728,15 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
         for (igraph_integer_t e = 0; e < ecount; e++) {
             igraph_integer_t from_idx = VECTOR(from)[e];
             igraph_integer_t to_idx = VECTOR(to)[e];
-            double dx = MATRIX(*res, from_idx, 0) - MATRIX(*res, to_idx, 0);
-            double dy = MATRIX(*res, from_idx, 1) - MATRIX(*res, to_idx, 1);
-            double w = weights ? VECTOR(*weights)[e] : 1.0;
-            double dist = sqrt(dx*dx + dy*dy);
+            igraph_real_t dx = MATRIX(*res, from_idx, 0) - MATRIX(*res, to_idx, 0);
+            igraph_real_t dy = MATRIX(*res, from_idx, 1) - MATRIX(*res, to_idx, 1);
+            igraph_real_t w = weights ? VECTOR(*weights)[e] : 1.0;
+            igraph_real_t dist = sqrt(dx*dx + dy*dy);
             if (dist == 0) {
                 dist = 1e-9;
             }
 
-            double scale = -CRK * dist * w;
+            igraph_real_t scale = -CRK * dist * w;
 
             VECTOR(disp_x)[from_idx] += scale * dx;
             VECTOR(disp_y)[from_idx] += scale * dy;
@@ -743,11 +744,11 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
             VECTOR(disp_y)[to_idx] -= scale * dy;
         }
 
-        double Fnorm = 0.0;
+        igraph_real_t Fnorm = 0.0;
         for (igraph_integer_t i = 0; i < vcount; i++) {
-            double fx = VECTOR(disp_x)[i];
-            double fy = VECTOR(disp_y)[i];
-            double fmag = sqrt(fx*fx + fy*fy);
+            igraph_real_t fx = VECTOR(disp_x)[i];
+            igraph_real_t fy = VECTOR(disp_y)[i];
+            igraph_real_t fmag = sqrt(fx*fx + fy*fy);
 
             if (fmag > 1e-12) {
                 VECTOR(disp_x)[i] /= fmag;
