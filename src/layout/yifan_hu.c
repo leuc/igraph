@@ -479,6 +479,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
 
         Fnorm0 = Fnorm;
         igraph_matrix_destroy(&forces);
+        IGRAPH_FINALLY_CLEAN(1);
     }
 
     if (beautify_leaves_flag) {
