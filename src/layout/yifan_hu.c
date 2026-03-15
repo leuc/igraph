@@ -465,8 +465,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
             step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
         }
 
-        IGRAPH_STATUSF(("Yifan Hu 3D: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g\n",
-                NULL, (int)iter, step, Fnorm, Fnorm0));
+        IGRAPH_STATUSF(("Yifan Hu 3D: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g\n",
+                NULL, (int)iter, step, Fnorm, Fnorm0, repulsive_exponent, natural_length));
 
         if (step < tolerance) {
             igraph_matrix_destroy(&forces);
@@ -615,8 +615,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
         Fnorm0 = Fnorm;
 
-        IGRAPH_STATUSF(("Yifan Hu: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g\n",
-                NULL, (int)iter, step, Fnorm, Fnorm0));
+        IGRAPH_STATUSF(("Yifan Hu: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g\n",
+                NULL, (int)iter, step, Fnorm, Fnorm0, repulsive_exponent, natural_length));
     }
 
     if (beautify_leaves_flag) {
@@ -771,8 +771,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
             }
         }
 
-        IGRAPH_STATUSF(("Yifan Hu (exact): iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, converged=%s\n",
-                NULL, (int)iter, step, Fnorm, Fnorm0,
+        IGRAPH_STATUSF(("Yifan Hu (exact): iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g, converged=%s\n",
+                NULL, (int)iter, step, Fnorm, Fnorm0, repulsive_exponent, natural_length,
                 (iter > 0 && step <= tolerance) ? "yes" : "no"));
 
         if (iter > 0 && step <= tolerance) {
