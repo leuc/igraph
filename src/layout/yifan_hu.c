@@ -394,7 +394,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
 
     igraph_real_t p = repulsive_exponent;
     if (p < 0) {
-        p = 2.0;
+        p = -1.0;
     }
 
     igraph_real_t KP = pow(K, 1.0 - p);
@@ -523,12 +523,11 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
     }
 
     igraph_real_t p = repulsive_exponent;
-        // If the user passes a negative value (e.g., default flag), use Hu's recommended 2.0
+        // Original Paper recommends 2.0 here, but graphviz code says -1.0
         if (p < 0) {
-            p = 2.0;
+            p = -1.0;
         }
 
-    // Follow Hu's numerator: K^(1+p)
     igraph_real_t KP = pow(K, 1.0 + p);
     igraph_real_t CRK = pow(IGRAPH_YHU_C, (2.0 - p) / 3.0) / K;
 
@@ -661,7 +660,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
 
     igraph_real_t p = repulsive_exponent;
     if (p < 0) {
-        p = 2.0;
+        p = -1.0;
     }
 
     igraph_real_t KP = pow(K, 1.0 - p);
