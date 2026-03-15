@@ -430,6 +430,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         IGRAPH_ALLOW_INTERRUPTION();
         IGRAPH_PROGRESS("Yifan Hu layout (3D)", 100.0 * iter / maxiter, NULL);
 
+        IGRAPH_STATUSF(("Yifan Hu 3D: iter=%d\n", NULL, (int)iter));
+
         IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
         igraph_matrix_t forces;
@@ -464,10 +466,6 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         if (iter > 0 && adaptive_cooling) {
             step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
         }
-
-        IGRAPH_STATUSF((NULL, "Yifan Hu 3D: iter=%d, step=%.6f, Fnorm=%.6f, converged=%s\n",
-                (int)iter, (double)step, (double)Fnorm,
-                step < tolerance ? "yes" : "no"));
 
         if (step < tolerance) {
             igraph_matrix_destroy(&forces);
@@ -565,6 +563,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         IGRAPH_ALLOW_INTERRUPTION();
         IGRAPH_PROGRESS("Yifan Hu layout", 100.0 * iter / maxiter, NULL);
 
+        IGRAPH_STATUSF(("Yifan Hu: iter=%d\n", NULL, (int)iter));
+
         IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
         igraph_matrix_t forces;
@@ -608,10 +608,6 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
 
         igraph_matrix_destroy(&forces);
         IGRAPH_FINALLY_CLEAN(1);
-
-        IGRAPH_STATUSF((NULL, "Yifan Hu: iter=%d, step=%.6f, Fnorm=%.6f, converged=%s\n",
-                (int)iter, (double)step, (double)Fnorm,
-                (iter > 0 && step <= tolerance) ? "yes" : "no"));
 
         if (iter > 0 && step <= tolerance) {
             break;
@@ -694,6 +690,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
         IGRAPH_ALLOW_INTERRUPTION();
         IGRAPH_PROGRESS("Yifan Hu layout (exact)", 100.0 * iter / maxiter, NULL);
 
+        IGRAPH_STATUSF(("Yifan Hu (exact): iter=%d\n", NULL, (int)iter));
+
         igraph_vector_null(&disp_x);
         igraph_vector_null(&disp_y);
 
@@ -773,8 +771,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
             }
         }
 
-        IGRAPH_STATUSF((NULL, "Yifan Hu (exact): iter=%d, step=%.6f, Fnorm=%.6f, converged=%s\n",
-                (int)iter, (double)step, (double)Fnorm,
+        IGRAPH_STATUSF(("Yifan Hu: iter=%d, step=%f, Fnorm=%f, converged=%s\n",
+                NULL, (int)iter, (double)step, (double)Fnorm,
                 (iter > 0 && step <= tolerance) ? "yes" : "no"));
 
         if (iter > 0 && step <= tolerance) {
