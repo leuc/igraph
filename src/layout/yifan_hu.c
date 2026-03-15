@@ -17,6 +17,8 @@
  */
 
 #include "igraph_layout.h"
+#include "igraph_interface.h"
+#include "igraph_progress.h"
 
 #define _USE_MATH_DEFINES
 
@@ -425,6 +427,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
 
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
+        IGRAPH_PROGRESS("Yifan Hu layout (3D)", 100.0 * iter / maxiter, NULL);
 
         IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
@@ -556,6 +559,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
 
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
+        IGRAPH_PROGRESS("Yifan Hu layout", 100.0 * iter / maxiter, NULL);
 
         IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
@@ -680,6 +684,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
 
     for (igraph_int_t iter = 0; iter < maxiter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
+        IGRAPH_PROGRESS("Yifan Hu layout (exact)", 100.0 * iter / maxiter, NULL);
 
         igraph_vector_null(&disp_x);
         igraph_vector_null(&disp_y);
