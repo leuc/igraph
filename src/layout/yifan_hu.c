@@ -466,7 +466,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         }
 
         IGRAPH_STATUSF(("Yifan Hu 3D: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g\n",
-                NULL, (int)iter, step, Fnorm, Fnorm0, repulsive_exponent, natural_length));
+                NULL, (int)iter, step, Fnorm, Fnorm0, p, K));
 
         if (step < tolerance) {
             igraph_matrix_destroy(&forces);
@@ -616,7 +616,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         Fnorm0 = Fnorm;
 
         IGRAPH_STATUSF(("Yifan Hu: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g\n",
-                NULL, (int)iter, step, Fnorm, Fnorm0, repulsive_exponent, natural_length));
+                NULL, (int)iter, step, Fnorm, Fnorm0, p, K));
     }
 
     if (beautify_leaves_flag) {
@@ -772,7 +772,7 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
         }
 
         IGRAPH_STATUSF(("Yifan Hu (exact): iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g, converged=%s\n",
-                NULL, (int)iter, step, Fnorm, Fnorm0, repulsive_exponent, natural_length,
+                NULL, (int)iter, step, Fnorm, Fnorm0, p, K,
                 (iter > 0 && step <= tolerance) ? "yes" : "no"));
 
         if (iter > 0 && step <= tolerance) {
@@ -831,7 +831,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
  *        false a random initial layout is used.
  * \param maxiter The number of iterations to perform. A reasonable
  *        default value is 500.
- * \param repulsive_exponent Repulsive force exponent. Default is -1.0 (SFDP).
+ * \param repulsive_exponent Repulsive force exponent. Use -1.0 for SFDP
+ *        (equivalent to p=2 in Fruchterman-Reingold). Default is -1.0.
  * \param natural_length Natural edge length. If negative, the average
  *        edge length is used. Default is -1.0 (auto).
  * \param step Initial step size. Default is 0.1.
@@ -982,7 +983,8 @@ igraph_error_t igraph_layout_yifan_hu(
  *        false a random initial layout is used.
  * \param maxiter The number of iterations to perform. A reasonable
  *        default value is 500.
- * \param repulsive_exponent Repulsive force exponent. Default is -1.0 (SFDP).
+ * \param repulsive_exponent Repulsive force exponent. Use -1.0 for SFDP
+ *        (equivalent to p=2 in Fruchterman-Reingold). Default is -1.0.
  * \param natural_length Natural edge length. If negative, the average
  *        edge length is used. Default is -1.0 (auto).
  * \param step Initial step size. Default is 0.1.
