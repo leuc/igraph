@@ -19,6 +19,7 @@
 #include "igraph_layout.h"
 #include "igraph_interface.h"
 #include "igraph_progress.h"
+#include "igraph_statusbar.h"
 
 #define _USE_MATH_DEFINES
 
@@ -464,6 +465,10 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
             step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
         }
 
+        IGRAPH_STATUSF((NULL, "Yifan Hu 3D: iter=%d, step=%.6f, Fnorm=%.6f, converged=%s\n",
+                (int)iter, (double)step, (double)Fnorm,
+                step < tolerance ? "yes" : "no"));
+
         if (step < tolerance) {
             igraph_matrix_destroy(&forces);
             break;
@@ -603,6 +608,10 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
 
         igraph_matrix_destroy(&forces);
         IGRAPH_FINALLY_CLEAN(1);
+
+        IGRAPH_STATUSF((NULL, "Yifan Hu: iter=%d, step=%.6f, Fnorm=%.6f, converged=%s\n",
+                (int)iter, (double)step, (double)Fnorm,
+                (iter > 0 && step <= tolerance) ? "yes" : "no"));
 
         if (iter > 0 && step <= tolerance) {
             break;
@@ -763,6 +772,10 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
                 MATRIX(*res, i, 1) = VECTOR(*maxy)[i];
             }
         }
+
+        IGRAPH_STATUSF((NULL, "Yifan Hu (exact): iter=%d, step=%.6f, Fnorm=%.6f, converged=%s\n",
+                (int)iter, (double)step, (double)Fnorm,
+                (iter > 0 && step <= tolerance) ? "yes" : "no"));
 
         if (iter > 0 && step <= tolerance) {
             break;
