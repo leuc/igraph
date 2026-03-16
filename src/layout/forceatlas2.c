@@ -52,9 +52,9 @@ static void fa2_repulsive_force(
 ) {
     fa2_bh_data_t *data = (fa2_bh_data_t *)user_data;
 
-    igraph_real_t xDist = data->nodes->x[p1->id] - data->nodes->x[p2->id];
-    igraph_real_t yDist = data->nodes->y[p1->id] - data->nodes->y[p2->id];
-    igraph_real_t zDist = data->is_3d ? (data->nodes->z[p1->id] - data->nodes->z[p2->id]) : 0.0;
+    igraph_real_t xDist = p1->coord[0] - p2->coord[0];
+    igraph_real_t yDist = p1->coord[1] - p2->coord[1];
+    igraph_real_t zDist = data->is_3d ? (p1->coord[2] - p2->coord[2]) : 0.0;
     igraph_real_t dist2 = xDist*xDist + yDist*yDist + zDist*zDist;
 
     if (dist2 > 0) {
