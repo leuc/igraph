@@ -71,6 +71,7 @@ static void fa2_repulsive_force(
 static igraph_error_t igraph_i_layout_forceatlas2(
         const igraph_t *graph, igraph_matrix_t *res,
         igraph_integer_t iterations,
+        igraph_bool_t linlog_mode,
         igraph_bool_t outbound_attraction_distribution,
         igraph_real_t edge_weight_influence,
         igraph_real_t jitter_tolerance,
@@ -238,23 +239,34 @@ static igraph_error_t igraph_i_layout_forceatlas2(
             igraph_real_t yDist = nodes.y[u] - nodes.y[v];
             igraph_real_t zDist = is_3d ? (nodes.z[u] - nodes.z[v]) : 0.0;
 
-            igraph_real_t w_eff = (edge_weight_influence == 1.0) ? weight : pow(weight, edge_weight_influence);
-            igraph_real_t factor_u = outbound_attraction_distribution ? (-outbound_att_comp * w_eff / nodes.mass[u]) : (-outbound_att_comp * w_eff);
+            // Calculate euclidean distance for LinLog adjustment
+            igraph_real_t dist = sqrt(xDist*xDist + yDist*yDist + zDist*zDist);
 
-            #pragma omp atomic update
-            nodes.dx[u] += xDist * factor_u;
-            #pragma omp atomic update
-            nodes.dy[u] += yDist * factor_u;
-            #pragma omp atomic update
-            nodes.dx[v] -= xDist * factor_u;
-            #pragma omp atomic update
-            nodes.dy[v] -= yDist * factor_u;
+            if (dist > 0) {
+                igraph_real_t w_eff = (edge_weight_influence == 1.0) ? weight : pow(weight, edge_weight_influence);
+                igraph_real_t factor_u = outbound_attraction_distribution ? (-outbound_att_comp * w_eff / nodes.mass[u]) : (-outbound_att_comp * w_eff);
 
-            if (is_3d) {
+                // Apply the LinLog energy model F_a = log(1 + d)
+                // We divide by `dist` because `xDist`, `yDist`, `zDist` already implicitly multiply the distance.
+                if (linlog_mode) {
+                    factor_u *= log(1.0 + dist) / dist;
+                }
+
                 #pragma omp atomic update
-                nodes.dz[u] += zDist * factor_u;
+                nodes.dx[u] += xDist * factor_u;
                 #pragma omp atomic update
-                nodes.dz[v] -= zDist * factor_u;
+                nodes.dy[u] += yDist * factor_u;
+                #pragma omp atomic update
+                nodes.dx[v] -= xDist * factor_u;
+                #pragma omp atomic update
+                nodes.dy[v] -= yDist * factor_u;
+
+                if (is_3d) {
+                    #pragma omp atomic update
+                    nodes.dz[u] += zDist * factor_u;
+                    #pragma omp atomic update
+                    nodes.dz[v] -= zDist * factor_u;
+                }
             }
         }
 
@@ -335,6 +347,7 @@ static igraph_error_t igraph_i_layout_forceatlas2(
 igraph_error_t igraph_layout_forceatlas2(
         const igraph_t *graph, igraph_matrix_t *res,
         igraph_integer_t iterations,
+        igraph_bool_t linlog_mode,
         igraph_bool_t outbound_attraction_distribution,
         igraph_real_t edge_weight_influence,
         igraph_real_t jitter_tolerance,
@@ -345,13 +358,14 @@ igraph_error_t igraph_layout_forceatlas2(
         igraph_real_t gravity,
         const igraph_vector_t *weights) {
 
-    return igraph_i_layout_forceatlas2(graph, res, iterations, outbound_attraction_distribution, edge_weight_influence, jitter_tolerance, barnes_hut_optimize, barnes_hut_theta, scaling_ratio, strong_gravity_mode, gravity, weights, 0);
+    return igraph_i_layout_forceatlas2(graph, res, iterations, linlog_mode, outbound_attraction_distribution, edge_weight_influence, jitter_tolerance, barnes_hut_optimize, barnes_hut_theta, scaling_ratio, strong_gravity_mode, gravity, weights, 0);
 }
 
 /* Public Wrapper: 3D ForceAtlas2 */
 igraph_error_t igraph_layout_forceatlas2_3d(
         const igraph_t *graph, igraph_matrix_t *res,
         igraph_integer_t iterations,
+        igraph_bool_t linlog_mode,
         igraph_bool_t outbound_attraction_distribution,
         igraph_real_t edge_weight_influence,
         igraph_real_t jitter_tolerance,
@@ -362,5 +376,5 @@ igraph_error_t igraph_layout_forceatlas2_3d(
         igraph_real_t gravity,
         const igraph_vector_t *weights) {
 
-    return igraph_i_layout_forceatlas2(graph, res, iterations, outbound_attraction_distribution, edge_weight_influence, jitter_tolerance, barnes_hut_optimize, barnes_hut_theta, scaling_ratio, strong_gravity_mode, gravity, weights, 1);
+    return igraph_i_layout_forceatlas2(graph, res, iterations, linlog_mode, outbound_attraction_distribution, edge_weight_influence, jitter_tolerance, barnes_hut_optimize, barnes_hut_theta, scaling_ratio, strong_gravity_mode, gravity, weights, 1);
 }

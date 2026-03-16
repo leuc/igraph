@@ -277,6 +277,7 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_davidson_harel(const igraph_t *graph,
 IGRAPH_EXPORT igraph_error_t igraph_layout_forceatlas2(
         const igraph_t *graph, igraph_matrix_t *res,
         igraph_integer_t iterations,
+        igraph_bool_t linlog_mode,
         igraph_bool_t outbound_attraction_distribution,
         igraph_real_t edge_weight_influence,
         igraph_real_t jitter_tolerance,
@@ -295,6 +296,7 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_forceatlas2(
 IGRAPH_EXPORT igraph_error_t igraph_layout_forceatlas2_3d(
         const igraph_t *graph, igraph_matrix_t *res,
         igraph_integer_t iterations,
+        igraph_bool_t linlog_mode,
         igraph_bool_t outbound_attraction_distribution,
         igraph_real_t edge_weight_influence,
         igraph_real_t jitter_tolerance,
