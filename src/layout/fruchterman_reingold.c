@@ -21,6 +21,7 @@
 #include "igraph_random.h"
 #include "igraph_interface.h"
 #include "igraph_components.h"
+#include "igraph_step.h"
 
 #include "core/grid.h"
 #include "core/interruption.h"
@@ -59,6 +60,9 @@ static igraph_error_t igraph_layout_i_fr(const igraph_t *graph,
 
     for (igraph_int_t i = 0; i < niter; i++) {
         IGRAPH_ALLOW_INTERRUPTION();
+        if (i % 10 == 0) {
+            IGRAPH_STEP(res, NULL);
+        }
 
         /* calculate repulsive forces, we have a special version
            for unconnected graphs */
@@ -201,6 +205,9 @@ static igraph_error_t igraph_layout_i_grid_fr(
         igraph_int_t v, u;
 
         IGRAPH_ALLOW_INTERRUPTION();
+        if (i % 10 == 0) {
+            IGRAPH_STEP(res, NULL);
+        }
 
         igraph_vector_null(&dispx);
         igraph_vector_null(&dispy);
@@ -550,6 +557,9 @@ igraph_error_t igraph_layout_fruchterman_reingold_3d(const igraph_t *graph,
 
     for (igraph_int_t i = 0; i < niter; i++) {
         IGRAPH_ALLOW_INTERRUPTION();
+        if (i % 10 == 0) {
+            IGRAPH_STEP(res, NULL);
+        }
 
         /* calculate repulsive forces, we have a special version
            for unconnected graphs */
