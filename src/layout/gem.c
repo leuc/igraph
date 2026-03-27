@@ -24,6 +24,7 @@
 #include "igraph_interface.h"
 #include "igraph_random.h"
 #include "igraph_structural.h"
+#include "igraph_step.h"
 
 #include "core/interruption.h"
 #include "core/math.h" /* M_PI */
@@ -157,6 +158,7 @@ igraph_error_t igraph_layout_gem(const igraph_t *graph, igraph_matrix_t *res,
         igraph_real_t px, py, pvx, pvy;
 
         IGRAPH_ALLOW_INTERRUPTION();
+        IGRAPH_STEP(res, NULL);
 
         /* choose a vertex v to update */
         if (perm_pointer <= 0) {
