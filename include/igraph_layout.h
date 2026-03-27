@@ -153,6 +153,21 @@ IGRAPH_EXPERIMENTAL IGRAPH_EXPORT igraph_error_t igraph_layout_umap_compute_weig
                                                 igraph_vector_t *weights);
 
 
+IGRAPH_EXPORT igraph_error_t igraph_layout_tsne(const igraph_t *graph,
+                                                igraph_matrix_t *res,
+                                                igraph_bool_t use_seed,
+                                                const igraph_vector_t *weights,
+                                                igraph_integer_t epochs,
+                                                igraph_real_t theta);
+
+IGRAPH_EXPORT igraph_error_t igraph_layout_tsne_3d(const igraph_t *graph,
+                                                   igraph_matrix_t *res,
+                                                   igraph_bool_t use_seed,
+                                                   const igraph_vector_t *weights,
+                                                   igraph_integer_t epochs,
+                                                   igraph_real_t theta);
+
+
 /**
  * \struct igraph_layout_drl_options_t
  * Parameters for the DrL layout generator

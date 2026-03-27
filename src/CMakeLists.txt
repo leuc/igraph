@@ -235,6 +235,7 @@ add_library(
   layout/reingold_tilford.c
   layout/sugiyama.c
   layout/umap.c
+  layout/bh_tsn.c
 
   operators/add_edge.c
   operators/complementer.c
