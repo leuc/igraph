@@ -13,6 +13,8 @@
 #include "igraph_random.h"
 #include "core/interruption.h"
 #include "core/barnes_hut.h"
+#include "igraph_progress.h"
+#include "igraph_step.h"
 #include <math.h>
 
 /* Structure to pass configuration and accumulated Z (sum_Q) to the force functions */
@@ -163,6 +165,7 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
     igraph_integer_t mom_switch_iter = 250;
 
     for (igraph_integer_t iter = 0; iter < epochs; iter++) {
+        IGRAPH_PROGRESS(NULL, (100.0 * iter) / epochs, NULL);
         IGRAPH_ALLOW_INTERRUPTION();
 
         /* Switch hyperparameters mid-run */
@@ -207,6 +210,7 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
             }
         }
         igraph_i_tsne_center_layout(res);
+        IGRAPH_STEP(res, NULL);
     }
 
     igraph_bh_tree_destroy(&tree);
