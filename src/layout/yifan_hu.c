@@ -1,6 +1,6 @@
 /*
    igraph library.
-   Copyright (C) 2024  The igraph development team <igraph@igraph.org>
+   Copyright (C) 2026  The igraph development team <igraph@igraph.org>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -47,115 +47,84 @@ typedef struct {
     const igraph_vector_t *weights;
 } yhu_data_t;
 
-static void yhu_repulsive_force(
+/* =========================================================================
+ * PHYSICS PLUGINS (KERNELS) - Unified for 2D and 3D
+ * ========================================================================= */
+
+static void yhu_repulsion_kernel(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    igraph_real_t *force,
+    igraph_real_t dx,
+    igraph_real_t dy,
+    igraph_real_t dz,
+    igraph_real_t dist_sq,
+    igraph_real_t force[3],
     void *user_data
 ) {
     yhu_data_t *data = (yhu_data_t *)user_data;
 
-    if (p1->id == p2->id) {
-        return;
-    }
-
-    igraph_real_t dx = p1->coord[0] - p2->coord[0];
-    igraph_real_t dy = p1->coord[1] - p2->coord[1];
-    igraph_real_t dist_sq = dx*dx + dy*dy;
+    /* Handle coordinate collisions deterministically.
+       (p2->id == -1 indicates p2 is a macroscopic pseudo-node) */
 
     if (dist_sq < 1e-12) {
-        return;
+        igraph_real_t epsilon = (p2->id == -1 || p1->id > p2->id) ? 1e-5 : -1e-5;
+        dx += epsilon;
+        dy += epsilon;
+        if (data->dim == 3) dz += epsilon;
+        dist_sq = dx*dx + dy*dy + dz*dz;
     }
 
     igraph_real_t dist = sqrt(dist_sq);
-    igraph_real_t scale = data->KP / pow(dist, data->p);
+
+    /* Yifan Hu Repulsion: KP / d^p. We divide by dist again to get the vector multiplier: KP / d^(p+1) */
+    igraph_real_t scale = data->KP / pow(dist, data->p + 1.0);
 
     if (!isfinite(scale)) {
         scale = 1e10;
     }
 
-    force[0] = scale * dx / dist;
-    force[1] = scale * dy / dist;
-}
-
-static void yhu_attractive_force(
-    const igraph_bh_point_t *p1,
-    const igraph_bh_point_t *p2,
-    igraph_real_t *force,
-    void *user_data
-) {
-    yhu_data_t *data = (yhu_data_t *)user_data;
-
-    igraph_real_t dx = p1->coord[0] - p2->coord[0];
-    igraph_real_t dy = p1->coord[1] - p2->coord[1];
-    igraph_real_t dist = sqrt(dx*dx + dy*dy);
-
-    if (dist < 1e-12) {
-        return;
-    }
-
-    igraph_real_t scale = -data->CRK * dist;
-
     force[0] = scale * dx;
     force[1] = scale * dy;
+    force[2] = scale * dz; /* Safe in 2D because dz is 0.0 */
 }
 
-static void yhu_repulsive_force_3d(
+static void yhu_attraction_kernel(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    igraph_real_t *force,
+    igraph_real_t dx,
+    igraph_real_t dy,
+    igraph_real_t dz,
+    igraph_real_t dist_sq,
+    igraph_real_t weight,
+    igraph_real_t force_p1[3],
+    igraph_real_t force_p2[3],
     void *user_data
 ) {
     yhu_data_t *data = (yhu_data_t *)user_data;
 
-    if (p1->id == p2->id) {
-        return;
-    }
-
-    igraph_real_t dx = p1->coord[0] - p2->coord[0];
-    igraph_real_t dy = p1->coord[1] - p2->coord[1];
-    igraph_real_t dz = p1->coord[2] - p2->coord[2];
-    igraph_real_t dist_sq = dx*dx + dy*dy + dz*dz;
-
     if (dist_sq < 1e-12) {
-        return;
+        return; /* Safely ignore perfect overlaps for attraction */
     }
 
     igraph_real_t dist = sqrt(dist_sq);
-    igraph_real_t scale = data->KP / pow(dist, data->p);
 
-    if (!isfinite(scale)) {
-        scale = 1e10;
-    }
+    /* Yifan Hu Attraction: -CRK * d * weight */
+    igraph_real_t scale = -data->CRK * dist * weight;
 
-    force[0] = scale * dx / dist;
-    force[1] = scale * dy / dist;
-    force[2] = scale * dz / dist;
+    /* Apply to Source */
+    force_p1[0] = scale * dx;
+    force_p1[1] = scale * dy;
+    force_p1[2] = scale * dz;
+
+    /* Symmetric Newton's Third Law to Target */
+    force_p2[0] = -force_p1[0];
+    force_p2[1] = -force_p1[1];
+    force_p2[2] = -force_p1[2];
 }
 
-static void yhu_attractive_force_3d(
-    const igraph_bh_point_t *p1,
-    const igraph_bh_point_t *p2,
-    igraph_real_t *force,
-    void *user_data
-) {
-    yhu_data_t *data = (yhu_data_t *)user_data;
-
-    igraph_real_t dx = p1->coord[0] - p2->coord[0];
-    igraph_real_t dy = p1->coord[1] - p2->coord[1];
-    igraph_real_t dz = p1->coord[2] - p2->coord[2];
-    igraph_real_t dist = sqrt(dx*dx + dy*dy + dz*dz);
-
-    if (dist < 1e-12) {
-        return;
-    }
-
-    igraph_real_t scale = -data->CRK * dist;
-
-    force[0] = scale * dx;
-    force[1] = scale * dy;
-    force[2] = scale * dz;
-}
+/* =========================================================================
+ * CORE LAYOUT ALGORITHMS
+ * ========================================================================= */
 
 static igraph_real_t update_step(igraph_bool_t adaptive_cooling, igraph_real_t step, igraph_real_t Fnorm, igraph_real_t Fnorm0) {
     if (!adaptive_cooling) {
@@ -436,9 +405,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         IGRAPH_CHECK(igraph_matrix_init(&forces, vcount, 3));
         IGRAPH_FINALLY(igraph_matrix_destroy, &forces);
 
-        igraph_bh_calculate_repulsive_forces(&tree, &forces, yhu_repulsive_force_3d, &yhu_data);
-
-        igraph_bh_calculate_attractive_forces(&tree, &from, &to, weights, &forces, yhu_attractive_force_3d, &yhu_data);
+        IGRAPH_CHECK(igraph_bh_apply_repulsion_from_tree(&tree, &forces, yhu_repulsion_kernel, &yhu_data));
+        IGRAPH_CHECK(igraph_bh_apply_attraction_from_edges(&tree, &from, &to, weights, &forces, yhu_attraction_kernel, &yhu_data));
 
         igraph_real_t Fnorm = 0.0;
         for (igraph_integer_t i = 0; i < vcount; i++) {
@@ -570,9 +538,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         IGRAPH_CHECK(igraph_matrix_init(&forces, vcount, 2));
         IGRAPH_FINALLY(igraph_matrix_destroy, &forces);
 
-        igraph_bh_calculate_repulsive_forces(&tree, &forces, yhu_repulsive_force, &yhu_data);
-
-        igraph_bh_calculate_attractive_forces(&tree, &from, &to, weights, &forces, yhu_attractive_force, &yhu_data);
+        IGRAPH_CHECK(igraph_bh_apply_repulsion_from_tree(&tree, &forces, yhu_repulsion_kernel, &yhu_data));
+        IGRAPH_CHECK(igraph_bh_apply_attraction_from_edges(&tree, &from, &to, weights, &forces, yhu_attraction_kernel, &yhu_data));
 
         igraph_real_t Fnorm = 0.0;
         for (igraph_integer_t i = 0; i < vcount; i++) {
@@ -825,39 +792,39 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
  *
  * \param graph Pointer to an initialized graph object.
  * \param res Pointer to an initialized matrix object. This will
- *        contain the result and will be resized as needed.
+ * contain the result and will be resized as needed.
  * \param use_seed If true the supplied values in the
- *        \p res argument are used as an initial layout, if
- *        false a random initial layout is used.
+ * \p res argument are used as an initial layout, if
+ * false a random initial layout is used.
  * \param maxiter The number of iterations to perform. A reasonable
- *        default value is 500.
+ * default value is 500.
  * \param repulsive_exponent Repulsive force exponent. Use -1.0 for SFDP
- *        (equivalent to p=2 in Fruchterman-Reingold). Default is -1.0.
+ * (equivalent to p=2 in Fruchterman-Reingold). Default is -1.0.
  * \param natural_length Natural edge length. If negative, the average
- *        edge length is used. Default is -1.0 (auto).
+ * edge length is used. Default is -1.0 (auto).
  * \param step Initial step size. Default is 0.1.
  * \param adaptive_cooling Use adaptive step cooling. Default is true.
  * \param tolerance Convergence tolerance. If step size falls below
- *        this value, the algorithm stops. Default is 0.001.
+ * this value, the algorithm stops. Default is 0.001.
  * \param quadtree_scheme Quadtree scheme to use. Options:
- *        \c IGRAPH_QUADTREE_NORMAL, \c IGRAPH_QUADTREE_FAST,
- *        \c IGRAPH_QUADTREE_HYBRID, \c IGRAPH_QUADTREE_NONE.
- *        Default is \c IGRAPH_QUADTREE_NORMAL.
+ * \c IGRAPH_QUADTREE_NORMAL, \c IGRAPH_QUADTREE_FAST,
+ * \c IGRAPH_QUADTREE_HYBRID, \c IGRAPH_QUADTREE_NONE.
+ * Default is \c IGRAPH_QUADTREE_NORMAL.
  * \param max_qtree_level Maximum quadtree depth. Default is 10.
  * \param beautify_leaves Arrange degree-1 nodes around their parent.
- *        Default is false.
+ * Default is false.
  * \param weights Pointer to a vector containing edge weights. Weights must
- *        be positive. If \c NULL, all edges are assumed to have weight 1.
+ * be positive. If \c NULL, all edges are assumed to have weight 1.
  * \param minx Pointer to a vector, or a \c NULL pointer. If not a
- *        \c NULL pointer then the vector gives the minimum
- *        \quote x \endquote coordinate for every vertex.
+ * \c NULL pointer then the vector gives the minimum
+ * \quote x \endquote coordinate for every vertex.
  * \param maxx Same as \p minx, but the maximum \quote x \endquote
- *        coordinates.
+ * coordinates.
  * \param miny Pointer to a vector, or a \c NULL pointer. If not a
- *        \c NULL pointer then the vector gives the minimum
- *        \quote y \endquote coordinate for every vertex.
+ * \c NULL pointer then the vector gives the minimum
+ * \quote y \endquote coordinate for every vertex.
  * \param maxy Same as \p miny, but the maximum \quote y \endquote
- *        coordinates.
+ * coordinates.
  * \return Error code.
  *
  * Time complexity: O(n^2) per iteration for exact algorithm,
@@ -977,29 +944,29 @@ igraph_error_t igraph_layout_yifan_hu(
  *
  * \param graph Pointer to an initialized graph object.
  * \param res Pointer to an initialized matrix object. This will
- *        contain the result and will be resized as needed.
+ * contain the result and will be resized as needed.
  * \param use_seed If true the supplied values in the
- *        \p res argument are used as an initial layout, if
- *        false a random initial layout is used.
+ * \p res argument are used as an initial layout, if
+ * false a random initial layout is used.
  * \param maxiter The number of iterations to perform. A reasonable
- *        default value is 500.
+ * default value is 500.
  * \param repulsive_exponent Repulsive force exponent. Use -1.0 for SFDP
- *        (equivalent to p=2 in Fruchterman-Reingold). Default is -1.0.
+ * (equivalent to p=2 in Fruchterman-Reingold). Default is -1.0.
  * \param natural_length Natural edge length. If negative, the average
- *        edge length is used. Default is -1.0 (auto).
+ * edge length is used. Default is -1.0 (auto).
  * \param step Initial step size. Default is 0.1.
  * \param adaptive_cooling Use adaptive step cooling. Default is true.
  * \param tolerance Convergence tolerance. If step size falls below
- *        this value, the algorithm stops. Default is 0.001.
+ * this value, the algorithm stops. Default is 0.001.
  * \param quadtree_scheme Quadtree scheme to use. Options:
- *        \c IGRAPH_QUADTREE_NORMAL, \c IGRAPH_QUADTREE_FAST,
- *        \c IGRAPH_QUADTREE_HYBRID, \c IGRAPH_QUADTREE_NONE.
- *        Default is \c IGRAPH_QUADTREE_NORMAL.
+ * \c IGRAPH_QUADTREE_NORMAL, \c IGRAPH_QUADTREE_FAST,
+ * \c IGRAPH_QUADTREE_HYBRID, \c IGRAPH_QUADTREE_NONE.
+ * Default is \c IGRAPH_QUADTREE_NORMAL.
  * \param max_qtree_level Maximum octree depth. Default is 10.
  * \param beautify_leaves Arrange degree-1 nodes around their parent.
- *        Default is false.
+ * Default is false.
  * \param weights Pointer to a vector containing edge weights. Weights must
- *        be positive. If \c NULL, all edges are assumed to have weight 1.
+ * be positive. If \c NULL, all edges are assumed to have weight 1.
  * \return Error code.
  *
  * Time complexity: O(n^2) per iteration for exact algorithm,
