@@ -68,6 +68,7 @@ static void tsne_attractive_force(const igraph_bh_point_t *p1, const igraph_bh_p
     /* Apply early exaggeration multiplier directly to the attractive force */
     igraph_real_t mult = data->p_multiplier * q_ij;
 
+    /* Matches bhtsne: pos_f[n] += p_ij * q_ij * (y_n - y_m) */
     for (igraph_integer_t d = 0; d < data->dim; d++) {
         force[d] = mult * (p1->coord[d] - p2->coord[d]);
     }
