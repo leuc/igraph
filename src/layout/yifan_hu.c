@@ -20,6 +20,7 @@
 #include "igraph_interface.h"
 #include "igraph_progress.h"
 #include "igraph_statusbar.h"
+#include "igraph_step.h"
 
 #define _USE_MATH_DEFINES
 
@@ -78,6 +79,8 @@ static void yhu_repulsion_kernel(
 
     /* Yifan Hu Repulsion: KP / d^p. We divide by dist again to get the vector multiplier: KP / d^(p+1) */
     igraph_real_t scale = data->KP / pow(dist, data->p + 1.0);
+
+    scale *= p2->mass;
 
     if (!isfinite(scale)) {
         scale = 1e10;
@@ -433,6 +436,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
             step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
         }
 
+        IGRAPH_STEP(res, NULL);
+
         IGRAPH_STATUSF(("Yifan Hu 3D: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g\n",
                 NULL, (int)iter, step, Fnorm, Fnorm0, p, K));
 
@@ -575,12 +580,15 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         igraph_matrix_destroy(&forces);
         IGRAPH_FINALLY_CLEAN(1);
 
+
         if (iter > 0 && step <= tolerance) {
             break;
         }
 
         step = update_step(adaptive_cooling, step, Fnorm, Fnorm0);
         Fnorm0 = Fnorm;
+
+        IGRAPH_STEP(res, NULL);
 
         IGRAPH_STATUSF(("Yifan Hu: iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g\n",
                 NULL, (int)iter, step, Fnorm, Fnorm0, p, K));
@@ -737,6 +745,8 @@ static igraph_error_t igraph_layout_i_yifan_hu_exact(
                 MATRIX(*res, i, 1) = VECTOR(*maxy)[i];
             }
         }
+
+        IGRAPH_STEP(res, NULL);
 
         IGRAPH_STATUSF(("Yifan Hu (exact): iter=%d, step=%g, Fnorm=%g, Fnorm0=%g, repulsive_exp=%g, natlen=%g, converged=%s\n",
                 NULL, (int)iter, step, Fnorm, Fnorm0, p, K,
