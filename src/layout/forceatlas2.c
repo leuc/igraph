@@ -41,28 +41,37 @@ typedef struct {
 typedef struct {
     igraph_real_t scaling_ratio;
     igraph_bool_t is_3d;
-    fa2_soa_t *nodes;
 } fa2_bh_data_t;
 
-static void fa2_repulsive_force(
+static void fa2_repulsion_kernel(
     const igraph_bh_point_t *p1,
     const igraph_bh_point_t *p2,
-    igraph_real_t *force,
+    igraph_real_t dx,
+    igraph_real_t dy,
+    igraph_real_t dz,
+    igraph_real_t dist_sq,
+    igraph_real_t force[3],
     void *user_data
 ) {
     fa2_bh_data_t *data = (fa2_bh_data_t *)user_data;
 
-    igraph_real_t xDist = p1->coord[0] - p2->coord[0];
-    igraph_real_t yDist = p1->coord[1] - p2->coord[1];
-    igraph_real_t zDist = data->is_3d ? (p1->coord[2] - p2->coord[2]) : 0.0;
-    igraph_real_t dist2 = xDist*xDist + yDist*yDist + zDist*zDist;
-
-    if (dist2 > 0) {
-        igraph_real_t factor = data->scaling_ratio * p1->mass * p2->mass / dist2;
-        force[0] = xDist * factor;
-        force[1] = yDist * factor;
-        if (data->is_3d) force[2] = zDist * factor;
+    /* LAYOUT EXCLUSIVE LOGIC: Handle coordinate collisions deterministically.
+       (p2->id == -1 indicates p2 is a macroscopic pseudo-node) */
+    if (dist_sq < 1e-12) {
+        igraph_real_t epsilon = (p2->id == -1 || p1->id > p2->id) ? 1e-5 : -1e-5;
+        dx += epsilon;
+        dy += epsilon;
+        if (data->is_3d) dz += epsilon;
+        dist_sq = dx*dx + dy*dy + dz*dz;
     }
+
+    /* ForceAtlas2 base repulsion: Kr * (m1*m2) / d */
+    /* Since we divide by dist_sq below to scale the vector, it calculates: (Kr * m1 * m2 * distance_vector) / d^2 */
+    igraph_real_t factor = data->scaling_ratio * p1->mass * p2->mass / dist_sq;
+
+    force[0] = factor * dx;
+    force[1] = factor * dy;
+    force[2] = factor * dz; /* Safe in 2D because dz is 0.0 */
 }
 
 /**
@@ -143,8 +152,7 @@ static igraph_error_t igraph_i_layout_forceatlas2(
 
     fa2_bh_data_t bh_data = {
         .scaling_ratio = scaling_ratio,
-        .is_3d = is_3d,
-        .nodes = &nodes
+        .is_3d = is_3d
     };
 
     for (iter = 0; iter < iterations; iter++) {
@@ -173,7 +181,8 @@ static igraph_error_t igraph_i_layout_forceatlas2(
 
             IGRAPH_CHECK(igraph_bh_tree_build(&tree, &coords, &masses));
 
-            IGRAPH_CHECK(igraph_bh_calculate_repulsive_forces(&tree, &forces, fa2_repulsive_force, &bh_data));
+            igraph_matrix_null(&forces);
+            IGRAPH_CHECK(igraph_bh_apply_repulsion_from_tree(&tree, &forces, fa2_repulsion_kernel, &bh_data));
 
             for (i = 0; i < no_of_nodes; i++) {
                 nodes.dx[i] = MATRIX(forces, i, 0);
