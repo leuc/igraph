@@ -16,11 +16,13 @@
 #include "igraph_progress.h"
 #include "igraph_step.h"
 #include <math.h>
+#include <omp.h>
 
 /* Structure to pass configuration and accumulated Z (sum_Q) to the force functions */
 typedef struct {
     igraph_real_t sum_Q;
     igraph_real_t p_multiplier;
+    igraph_real_t total_weight;
     igraph_integer_t dim;
 } tsne_force_data_t;
 
@@ -64,7 +66,9 @@ static void tsne_repulsion_kernel(
     /* Apply to vector. Branchless execution (dz is naturally 0.0 in 2D mode) */
     force[0] = mult * dx;
     force[1] = mult * dy;
-    force[2] = mult * dz;
+
+    if (data->dim == 3) force[2] = mult * dz;
+        else force[2] = 0.0; /* Play it completely safe with the array memory */
 }
 
 /* Exact attractive forces strictly applied on non-zero P edges */
@@ -82,13 +86,14 @@ static void tsne_attraction_kernel(
 ) {
     tsne_force_data_t *data = (tsne_force_data_t*)user_data;
 
-    if (dist_sq < 1e-12) return; /* Safely ignore zero-distance exact overlaps */
-
-    /* Student-t distribution q_ij */
+    if (dist_sq < 1e-12)  {
+        force_p1[0] = force_p1[1] = force_p1[2] = 0.0;
+        force_p2[0] = force_p2[1] = force_p2[2] = 0.0;
+        return; /* Safely ignore zero-distance exact overlaps */
+    }
+    igraph_real_t p_ij = weight / data->total_weight;
     igraph_real_t q_ij = 1.0 / (1.0 + dist_sq);
-
-    /* Apply early exaggeration multiplier and edge weight directly to the attractive force */
-    igraph_real_t mult = data->p_multiplier * weight * q_ij;
+    igraph_real_t mult = data->p_multiplier * p_ij * q_ij;
 
     /* Matches bhtsne: pos_f[n] += p_ij * q_ij * (y_n - y_m) */
     force_p1[0] = mult * dx;
@@ -108,10 +113,12 @@ static void igraph_i_tsne_center_layout(igraph_matrix_t *layout) {
 
     for (igraph_integer_t d = 0; d < dim; d++) {
         igraph_real_t mean = 0.0;
+        #pragma omp parallel for reduction(+:mean) schedule(static)
         for (igraph_integer_t i = 0; i < n; i++) {
             mean += MATRIX(*layout, i, d);
         }
         mean /= n;
+        #pragma omp parallel for schedule(static)
         for (igraph_integer_t i = 0; i < n; i++) {
             MATRIX(*layout, i, d) -= mean;
         }
@@ -187,6 +194,13 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
     tsne_force_data_t force_data;
     force_data.dim = ndim;
 
+    /* Compute total edge weight for P matrix normalization */
+    force_data.total_weight = 0.0;
+    for (igraph_integer_t e = 0; e < no_edges; e++) {
+        force_data.total_weight += weights ? VECTOR(*weights)[e] : 1.0;
+    }
+    if (force_data.total_weight <= 0.0) force_data.total_weight = 1.0;
+
     /* t-SNE specific learning constants */
     igraph_real_t eta = 200.0;
     igraph_integer_t stop_lying_iter = 250;
@@ -215,28 +229,34 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
         IGRAPH_CHECK(igraph_bh_apply_attraction_from_edges(&tree, &from, &to, weights, &pos_f, tsne_attraction_kernel, &force_data));
 
         /* 3. Gradient update w/ adaptive learning rates */
-        for (igraph_integer_t i = 0; i < no_nodes; i++) {
-            for (igraph_integer_t d = 0; d < ndim; d++) {
+        #pragma omp parallel for schedule(static)
+        for (igraph_integer_t idx = 0; idx < no_nodes * ndim; idx++) {
+            igraph_integer_t i = idx / ndim;
+            igraph_integer_t d = idx % ndim;
 
-                igraph_real_t dC = MATRIX(pos_f, i, d) - (MATRIX(neg_f, i, d) / force_data.sum_Q);
-                igraph_real_t current_uY = MATRIX(uY, i, d);
-                igraph_real_t current_gain = MATRIX(gains, i, d);
+            igraph_real_t dC = MATRIX(pos_f, i, d) - (MATRIX(neg_f, i, d) / force_data.sum_Q);
+            igraph_real_t current_uY = MATRIX(uY, i, d);
+            igraph_real_t current_gain = MATRIX(gains, i, d);
 
-                if (sign_real(dC) != sign_real(current_uY)) {
-                    current_gain += 0.2;
-                } else {
-                    current_gain *= 0.8;
-                }
-                if (current_gain < 0.01) {
-                    current_gain = 0.01;
-                }
-
-                MATRIX(gains, i, d) = current_gain;
-                current_uY = momentum * current_uY - eta * current_gain * dC;
-
-                MATRIX(uY, i, d) = current_uY;
-                MATRIX(*res, i, d) += current_uY;
+            if (sign_real(dC) != sign_real(current_uY)) {
+                current_gain += 0.2;
+            } else {
+                current_gain *= 0.8;
             }
+            if (current_gain < 0.01) {
+                current_gain = 0.01;
+            }
+            if (current_gain > 10.0) current_gain = 10.0;
+
+            MATRIX(gains, i, d) = current_gain;
+            current_uY = momentum * current_uY - eta * current_gain * dC;
+
+            /* Clamp velocity magnitude to prevent gradient explosion */
+            if (current_uY > 5.0) current_uY = 5.0;
+            if (current_uY < -5.0) current_uY = -5.0;
+
+            MATRIX(uY, i, d) = current_uY;
+            MATRIX(*res, i, d) += current_uY;
         }
         igraph_i_tsne_center_layout(res);
         IGRAPH_STEP(res, NULL);

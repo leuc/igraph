@@ -437,7 +437,7 @@ add_legacy_tests(
   igraph_layout_sphere
   igraph_layout_star
   igraph_layout_sugiyama
-  #igraph_layout_tsne
+  igraph_layout_bhtsne
   igraph_layout_umap
 )
 add_legacy_tests(
