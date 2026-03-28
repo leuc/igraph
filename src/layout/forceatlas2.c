@@ -19,6 +19,8 @@
 #include "igraph_layout.h"
 #include "igraph_interface.h"
 #include "igraph_progress.h"
+#include "igraph_statusbar.h"
+#include "igraph_step.h"
 #include "igraph_random.h"
 #include "igraph_memory.h"
 #include "core/math.h"
@@ -331,6 +333,10 @@ static igraph_error_t igraph_i_layout_forceatlas2(
             nodes.y[i] += nodes.dy[i] * factor;
             if (is_3d) nodes.z[i] += nodes.dz[i] * factor;
         }
+
+        IGRAPH_STEP(res, NULL);
+        IGRAPH_STATUSF(("ForceAtlas2: iter=%d, speed=%g, efficiency=%g, swinging=%g, traction=%g\n",
+                NULL, (int)iter, speed, speed_efficiency, total_swinging, total_effective_traction));
     }
 
     /* Final Matrix Transfer */
