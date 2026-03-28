@@ -213,6 +213,7 @@ add_library(
   ${PARSER_SOURCES}
 
   layout/align.c
+  layout/bhtsne.c
   layout/circular.c
   layout/davidson_harel.c
   layout/drl/DensityGrid.cpp
@@ -237,7 +238,6 @@ add_library(
   layout/reingold_tilford.c
   layout/sugiyama.c
   layout/umap.c
-  layout/bh_tsn.c
 
   operators/add_edge.c
   operators/complementer.c

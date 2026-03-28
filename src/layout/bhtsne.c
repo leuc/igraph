@@ -30,13 +30,26 @@ static int sign_real(igraph_real_t x) {
 }
 
 /* Repulsive force approximation via Barnes-Hut */
-static void tsne_repulsive_force(const igraph_bh_point_t *p1, const igraph_bh_point_t *p2, igraph_real_t force[3], void *user_data) {
+static void tsne_repulsion_kernel(
+    const igraph_bh_point_t *p1,
+    const igraph_bh_point_t *p2,
+    igraph_real_t dx,
+    igraph_real_t dy,
+    igraph_real_t dz,
+    igraph_real_t dist_sq,
+    igraph_real_t force[3],
+    void *user_data
+) {
     tsne_force_data_t *data = (tsne_force_data_t*)user_data;
-    igraph_real_t dist_sq = 0.0;
 
-    for (igraph_integer_t d = 0; d < data->dim; d++) {
-        igraph_real_t diff = p1->coord[d] - p2->coord[d];
-        dist_sq += diff * diff;
+    /* LAYOUT EXCLUSIVE LOGIC: Handle coordinate collisions deterministically.
+       (p2->id == -1 indicates p2 is a macroscopic pseudo-node) */
+    if (dist_sq < 1e-12) {
+        igraph_real_t epsilon = (p2->id == -1 || p1->id > p2->id) ? 1e-5 : -1e-5;
+        dx += epsilon;
+        dy += epsilon;
+        if (data->dim == 3) dz += epsilon;
+        dist_sq = dx*dx + dy*dy + dz*dz;
     }
 
     /* Student-t distribution q_ij (unnormalized) */
@@ -47,30 +60,45 @@ static void tsne_repulsive_force(const igraph_bh_point_t *p1, const igraph_bh_po
 
     /* Repulsive multiplier */
     igraph_real_t mult = p2->mass * q_ij * q_ij;
-    for (igraph_integer_t d = 0; d < data->dim; d++) {
-        force[d] = mult * (p1->coord[d] - p2->coord[d]);
-    }
+
+    /* Apply to vector. Branchless execution (dz is naturally 0.0 in 2D mode) */
+    force[0] = mult * dx;
+    force[1] = mult * dy;
+    force[2] = mult * dz;
 }
 
 /* Exact attractive forces strictly applied on non-zero P edges */
-static void tsne_attractive_force(const igraph_bh_point_t *p1, const igraph_bh_point_t *p2, igraph_real_t force[3], void *user_data) {
+static void tsne_attraction_kernel(
+    const igraph_bh_point_t *p1,
+    const igraph_bh_point_t *p2,
+    igraph_real_t dx,
+    igraph_real_t dy,
+    igraph_real_t dz,
+    igraph_real_t dist_sq,
+    igraph_real_t weight,
+    igraph_real_t force_p1[3],
+    igraph_real_t force_p2[3],
+    void *user_data
+) {
     tsne_force_data_t *data = (tsne_force_data_t*)user_data;
-    igraph_real_t dist_sq = 0.0;
 
-    for (igraph_integer_t d = 0; d < data->dim; d++) {
-        igraph_real_t diff = p1->coord[d] - p2->coord[d];
-        dist_sq += diff * diff;
-    }
+    if (dist_sq < 1e-12) return; /* Safely ignore zero-distance exact overlaps */
 
     /* Student-t distribution q_ij */
     igraph_real_t q_ij = 1.0 / (1.0 + dist_sq);
 
-    /* Apply early exaggeration multiplier directly to the attractive force */
-    igraph_real_t mult = data->p_multiplier * q_ij;
+    /* Apply early exaggeration multiplier and edge weight directly to the attractive force */
+    igraph_real_t mult = data->p_multiplier * weight * q_ij;
 
-    for (igraph_integer_t d = 0; d < data->dim; d++) {
-        force[d] = mult * (p1->coord[d] - p2->coord[d]);
-    }
+    /* Matches bhtsne: pos_f[n] += p_ij * q_ij * (y_n - y_m) */
+    force_p1[0] = mult * dx;
+    force_p1[1] = mult * dy;
+    force_p1[2] = mult * dz;
+
+    /* Apply symmetric Newton's Third Law forces back to p2 */
+    force_p2[0] = -force_p1[0];
+    force_p2[1] = -force_p1[1];
+    force_p2[2] = -force_p1[2];
 }
 
 /* Re-center layout around origin to prevent drift */
@@ -122,8 +150,8 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
         for (igraph_integer_t i = 0; i < no_nodes; i++) {
             for (igraph_integer_t d = 0; d < ndim; d++) {
                 /* Start with small variance normal distribution.
-                    * Variance = 0.0001 means Standard Deviation = 0.01
-                    */
+                 * Variance = 0.0001 means Standard Deviation = 0.01
+                 */
                 MATRIX(*res, i, d) = igraph_rng_get_normal(rng, 0.0, 0.01);
             }
         }
@@ -175,15 +203,16 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
         /* Dynamically assemble spatial tree this iteration */
         IGRAPH_CHECK(igraph_bh_tree_build(&tree, res, NULL));
 
-        /* 1. Calculate Repulsive Force (and Z) */
+        /* 1. Calculate Repulsive Force (and Z) via O(N log N) Tree */
         force_data.sum_Q = 0.0;
-        IGRAPH_CHECK(igraph_bh_calculate_repulsive_forces(&tree, &neg_f, tsne_repulsive_force, &force_data));
+        igraph_matrix_null(&neg_f);
+        IGRAPH_CHECK(igraph_bh_apply_repulsion_from_tree(&tree, &neg_f, tsne_repulsion_kernel, &force_data));
 
         if (force_data.sum_Q <= 0.0) force_data.sum_Q = 1e-12;
 
-        /* 2. Calculate Attractive Force */
+        /* 2. Calculate Attractive Force via O(E) Edge List */
         igraph_matrix_null(&pos_f);
-        IGRAPH_CHECK(igraph_bh_calculate_attractive_forces(&tree, &from, &to, weights, &pos_f, tsne_attractive_force, &force_data));
+        IGRAPH_CHECK(igraph_bh_apply_attraction_from_edges(&tree, &from, &to, weights, &pos_f, tsne_attraction_kernel, &force_data));
 
         /* 3. Gradient update w/ adaptive learning rates */
         for (igraph_integer_t i = 0; i < no_nodes; i++) {
@@ -231,7 +260,7 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
  * \function igraph_layout_tsne
  * \brief 2D Layout using Barnes-Hut t-Distributed Stochastic Neighbor Embedding (t-SNE).
  */
-igraph_error_t igraph_layout_tsne(const igraph_t *graph,
+igraph_error_t igraph_layout_bhtsne(const igraph_t *graph,
                                   igraph_matrix_t *res,
                                   igraph_bool_t use_seed,
                                   const igraph_vector_t *weights,
@@ -244,7 +273,7 @@ igraph_error_t igraph_layout_tsne(const igraph_t *graph,
  * \function igraph_layout_tsne_3d
  * \brief 3D Layout using Barnes-Hut t-Distributed Stochastic Neighbor Embedding (t-SNE).
  */
-igraph_error_t igraph_layout_tsne_3d(const igraph_t *graph,
+igraph_error_t igraph_layout_bhtsne_3d(const igraph_t *graph,
                                      igraph_matrix_t *res,
                                      igraph_bool_t use_seed,
                                      const igraph_vector_t *weights,
