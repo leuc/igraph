@@ -25,6 +25,7 @@
 #include "igraph_progress.h"
 #include "igraph_random.h"
 #include "igraph_visitor.h"
+#include "igraph_step.h"
 
 #include "core/grid.h"
 #include "core/interruption.h"
@@ -298,6 +299,7 @@ igraph_error_t igraph_layout_lgl(const igraph_t *graph, igraph_matrix_t *res,
             IGRAPH_PROGRESS("Large graph layout",
                             100.0 * ((actlayer - 1.0) / (no_of_layers - 1.0) + (it) / (maxit * (no_of_layers - 1.0))),
                             0);
+            IGRAPH_STEP(res, NULL);
 
             /* init */
             igraph_vector_null(&forcex);
