@@ -334,19 +334,19 @@ static igraph_error_t igraph_i_layout_forceatlas2(
             if (is_3d) nodes.z[i] += nodes.dz[i] * factor;
         }
 
-        IGRAPH_STEP(res, NULL);
         IGRAPH_STATUSF(("ForceAtlas2: iter=%d, speed=%g, efficiency=%g, swinging=%g, traction=%g\n",
                 NULL, (int)iter, speed, speed_efficiency, total_swinging, total_effective_traction));
-    }
 
-    /* Final Matrix Transfer */
-    #pragma omp parallel for simd schedule(static)
-    for (i = 0; i < no_of_nodes; i++) {
-        MATRIX(*res, i, 0) = nodes.x[i];
-        MATRIX(*res, i, 1) = nodes.y[i];
-        if (is_3d) MATRIX(*res, i, 2) = nodes.z[i];
-    }
+        /* Final Matrix Transfer */
+        #pragma omp parallel for simd schedule(static)
+        for (i = 0; i < no_of_nodes; i++) {
+            MATRIX(*res, i, 0) = nodes.x[i];
+            MATRIX(*res, i, 1) = nodes.y[i];
+            if (is_3d) MATRIX(*res, i, 2) = nodes.z[i];
+        }
+        IGRAPH_STEP(res, NULL);
 
+    }
     /* Cleanup handled by IGRAPH_FINALLY - do not call manually */
 
     IGRAPH_FREE(nodes.x); IGRAPH_FREE(nodes.y); IGRAPH_FREE(nodes.dx); IGRAPH_FREE(nodes.dy);
