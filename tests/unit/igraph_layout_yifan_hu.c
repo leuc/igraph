@@ -64,7 +64,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-4,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   /*weights*/ NULL,
                   /*minx*/ NULL, /*maxx*/ NULL,
@@ -86,7 +85,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-4,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   /*weights*/ NULL,
                   &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
@@ -110,7 +108,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-4,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   /*weights*/ NULL,
                   /*minx*/ NULL, /*maxx*/ NULL,
@@ -128,7 +125,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-4,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   /*weights*/ &weights,
                   /*minx*/ NULL, /*maxx*/ NULL,
@@ -146,7 +142,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-6,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   &weights, &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 1.0);
@@ -162,7 +157,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-6,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   &weights, &bounds[0], &bounds[1], &bounds[2], &bounds[3]) == IGRAPH_SUCCESS);
     check_and_destroy(&result, 1.0);
@@ -180,7 +174,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-4,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   /*weights*/ NULL,
                   /*minx*/ NULL, /*maxx*/ NULL,
@@ -203,7 +196,6 @@ int main(void) {
                   /*adaptive_cooling*/ 1,
                   /*tolerance*/ 1e-6,
                   /*quadtree_scheme*/ IGRAPH_QUADTREE_NORMAL,
-                  /*max_qtree_level*/ 10,
                   /*beautify_leaves*/ 0,
                   /*weights*/ NULL,
                   /*minx*/ NULL, /*maxx*/ NULL,
