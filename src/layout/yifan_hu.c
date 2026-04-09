@@ -339,7 +339,6 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
         igraph_bool_t adaptive_cooling,
         igraph_real_t tolerance,
         igraph_quadtree_scheme_t quadtree_scheme,
-        igraph_int_t max_qtree_level,
         igraph_bool_t beautify_leaves_flag,
         const igraph_vector_t *weights) {
 
@@ -384,7 +383,11 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp_3d(
     };
 
     igraph_bh_tree_t tree;
-    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 3, IGRAPH_YHU_BH, (int)max_qtree_level, 1));
+    {
+        igraph_integer_t bh_max_level, bh_leaf_capacity;
+        igraph_bh_tree_get_scaling_params(vcount, 3, &bh_max_level, &bh_leaf_capacity);
+        IGRAPH_CHECK(igraph_bh_tree_init(&tree, 3, IGRAPH_YHU_BH, bh_max_level, bh_leaf_capacity));
+    }
     IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
 
     igraph_vector_int_t from, to;
@@ -474,7 +477,6 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
         igraph_bool_t adaptive_cooling,
         igraph_real_t tolerance,
         igraph_quadtree_scheme_t quadtree_scheme,
-        igraph_int_t max_qtree_level,
         igraph_bool_t beautify_leaves_flag,
         const igraph_vector_t *weights,
         const igraph_vector_t *minx,
@@ -519,7 +521,11 @@ static igraph_error_t igraph_layout_i_yifan_hu_sfdp(
     };
 
     igraph_bh_tree_t tree;
-    IGRAPH_CHECK(igraph_bh_tree_init(&tree, 2, IGRAPH_YHU_BH, (int)max_qtree_level, 1));
+    {
+        igraph_integer_t bh_max_level, bh_leaf_capacity;
+        igraph_bh_tree_get_scaling_params(vcount, 2, &bh_max_level, &bh_leaf_capacity);
+        IGRAPH_CHECK(igraph_bh_tree_init(&tree, 2, IGRAPH_YHU_BH, bh_max_level, bh_leaf_capacity));
+    }
     IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
 
     igraph_vector_int_t from, to;
@@ -853,7 +859,6 @@ igraph_error_t igraph_layout_yifan_hu(
         igraph_bool_t adaptive_cooling,
         igraph_real_t tolerance,
         igraph_quadtree_scheme_t quadtree_scheme,
-        igraph_int_t max_qtree_level,
         igraph_bool_t beautify_leaves,
         const igraph_vector_t *weights,
         const igraph_vector_t *minx,
@@ -931,7 +936,7 @@ igraph_error_t igraph_layout_yifan_hu(
         return igraph_layout_i_yifan_hu_sfdp(graph, res, use_seed, maxiter,
                                              repulsive_exponent, natural_length,
                                              step, adaptive_cooling, tolerance,
-                                             quadtree_scheme, max_qtree_level,
+                                             quadtree_scheme,
                                              beautify_leaves,
                                              weights, minx, maxx, miny, maxy);
     } else {
@@ -995,7 +1000,6 @@ igraph_error_t igraph_layout_yifan_hu_3d(
         igraph_bool_t adaptive_cooling,
         igraph_real_t tolerance,
         igraph_quadtree_scheme_t quadtree_scheme,
-        igraph_int_t max_qtree_level,
         igraph_bool_t beautify_leaves,
         const igraph_vector_t *weights) {
 
@@ -1047,7 +1051,7 @@ igraph_error_t igraph_layout_yifan_hu_3d(
         return igraph_layout_i_yifan_hu_sfdp_3d(graph, res, use_seed, maxiter,
                                                  repulsive_exponent, natural_length,
                                                  step, adaptive_cooling, tolerance,
-                                                 quadtree_scheme, max_qtree_level,
+                                                 quadtree_scheme,
                                                  beautify_leaves, weights);
     } else {
         IGRAPH_ERROR("Exact 3D Yifan Hu layout not implemented. "
