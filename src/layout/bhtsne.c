@@ -187,9 +187,11 @@ static igraph_error_t igraph_i_layout_tsne_barnes_hut(
         }
     }
 
-    /* Init BH tree (quadtree/octree config) */
+    /* Init BH tree with dynamically-scaled parameters */
     igraph_bh_tree_t tree;
-    IGRAPH_CHECK(igraph_bh_tree_init(&tree, ndim, theta, 0, 0));
+    igraph_integer_t bh_max_level, bh_leaf_capacity;
+    igraph_bh_tree_get_scaling_params(no_nodes, ndim, &bh_max_level, &bh_leaf_capacity);
+    IGRAPH_CHECK(igraph_bh_tree_init(&tree, ndim, theta, bh_max_level, bh_leaf_capacity));
 
     tsne_force_data_t force_data;
     force_data.dim = ndim;
