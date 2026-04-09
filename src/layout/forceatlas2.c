@@ -143,7 +143,11 @@ static igraph_error_t igraph_i_layout_forceatlas2(
         IGRAPH_FINALLY(igraph_vector_destroy, &masses);
         IGRAPH_CHECK(igraph_matrix_init(&forces, no_of_nodes, is_3d ? 3 : 2));
         IGRAPH_FINALLY(igraph_matrix_destroy, &forces);
-        IGRAPH_CHECK(igraph_bh_tree_init(&tree, is_3d ? 3 : 2, barnes_hut_theta, 20, 1));
+        {
+            igraph_integer_t bh_max_level, bh_leaf_capacity;
+            igraph_bh_tree_get_scaling_params(no_of_nodes, is_3d ? 3 : 2, &bh_max_level, &bh_leaf_capacity);
+            IGRAPH_CHECK(igraph_bh_tree_init(&tree, is_3d ? 3 : 2, barnes_hut_theta, bh_max_level, bh_leaf_capacity));
+        }
         IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
     } else {
         IGRAPH_FINALLY(igraph_bh_tree_destroy, &tree);
