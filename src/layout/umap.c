@@ -24,6 +24,7 @@
 #include "igraph_nongraph.h"
 #include "igraph_random.h"
 #include "igraph_vector_list.h"
+#include "igraph_step.h"
 
 #include "layout/layout_internal.h"
 #include "core/interruption.h"
@@ -975,6 +976,10 @@ static igraph_error_t igraph_i_umap_optimize_layout_stochastic_gradient(
                 negative_sampling_rate,
                 e,
                 &next_epoch_sample_per_edge));
+
+        if (e % 10 == 0) {
+            IGRAPH_STEP(layout, NULL);
+        }
 
 #ifdef UMAP_DEBUG
         /* Recompute CE and check how it's going*/

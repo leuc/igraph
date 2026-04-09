@@ -23,6 +23,7 @@
 
 #include "igraph_interface.h"
 #include "igraph_progress.h"
+#include "igraph_step.h"
 
 #include "core/interruption.h"
 
@@ -375,6 +376,7 @@ igraph_error_t igraph_layout_graphopt(const igraph_t *graph, igraph_matrix_t *re
         /* Report progress in approx. every 100th step */
         if (i % 10 == 0) {
             IGRAPH_PROGRESS("Graphopt layout", 100.0 - 100.0 * i / niter, NULL);
+            IGRAPH_STEP(res, NULL);
         }
 
         /* Clear pending forces on all nodes */
