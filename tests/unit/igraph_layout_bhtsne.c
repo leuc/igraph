@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "test_utilities.h"
-#include "core/barnes_hut.h"
 
 /* Define the force data structure locally for the test */
 typedef struct {
