@@ -12,7 +12,7 @@
 #include "igraph_matrix.h"
 #include "igraph_random.h"
 #include "core/interruption.h"
-#include "core/barnes_hut.h"
+#include "igraph_barnes_hut.h"
 #include "igraph_progress.h"
 #include "igraph_step.h"
 #include <math.h>
