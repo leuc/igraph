@@ -25,7 +25,7 @@
 #include "igraph_memory.h"
 #include "core/math.h"
 #include "core/interruption.h"
-#include "core/barnes_hut.h"
+#include "igraph_barnes_hut.h"
 #include <stdlib.h>
 
 #ifdef _OPENMP
