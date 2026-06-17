@@ -53,10 +53,12 @@
  *   d C_BC / d L(u) = -sum_edges [1/p * dp/dL(u)]
  *                    + sum_non-edges [1/(1-p) * dp/dL(u)]
  *
- * The code computes the gradient of C_BC directly. For the t-distribution
- * p = 1/(1+dist^2*b), the gradient scalar (in the diff direction) is:
- *   Edges:       2*b*p * dist            (attractive after SGD subtraction)
- *   Non-edges:   -2*p / dist             (repulsive after SGD subtraction)
+ * The code computes the gradient of C_BC directly using the exact
+ * normalized probability p(u,v) = q(u,v) / Z where
+ * q(u,v) = 1/(1+dist^2*b) and Z = sum_{i!=j} q(i,j). The gradient
+ * dp/dL(u) uses the quotient rule (Z*dq - q*dZ) / Z^2, requiring a
+ * two-pass strategy: first compute Z, then for each vertex u compute
+ * dZ/dL(u) and evaluate all pair gradients.
  *
  * The paper also describes a multilevel strategy (Section 3.2.4, (2))
  * where the graph is coarsened into G_1, G_2, ..., G_K with decreasing
@@ -107,16 +109,20 @@
  * (Section 3.2.2).
  *
  * For the Student's t-distribution (Algorithm BCGL-T):
- *   p_T(u,v) = 1 / (Z * (1 + dist^2 * b))
+ *   p_T(u,v) = q(u,v) / Z,
+ *   q(u,v) = 1 / (1 + dist^2 * b),
+ *   Z = sum_{i != j} q(i,j)
  *
  * The gradient of C_BC w.r.t. L(u) for a pair (u,v) is (Eq. 10):
- *   For edges:      gradient = 2*b*p * diff      (attractive, toward v)
- *   For non-edges:  gradient = -2*p/dist^2 * diff (repulsive, away from v)
- * where p = 1/(1+dist^2*b) and diff = L(u)-L(v).
+ *   For edges:      d/dL [-log p] = -(1/p) * dp/dL(u)
+ *   For non-edges:  d/dL [-log(1-p)] = (1/(1-p)) * dp/dL(u)
  *
- * The code computes the gradient scalar (in the diff/dist unit direction):
- *   Edges:       2*b*p * dist
- *   Non-edges:   -2*p / dist
+ * where dp/dL(u) uses the quotient rule:
+ *   dp(u,v)/dL(u) = (Z * dq(u,v)/dL(u) - q(u,v) * dZ/dL(u)) / Z^2
+ *
+ * The global coupling term dZ/dL(u) is computed as:
+ *   dZ/dL(u) = 2 * sum_{v != u} dq(u,v)/dL(u)
+ *            = 2 * sum_{v != u} -2*b*q(u,v)^2 * (L(u)-L(v))
  *
  * The C_length gradient (Eq. 9) is applied separately to edges:
  *   d C_length / d L(u) = (2 / |E|) * (||L(u)-L(v)|| - 1) * (diff / dist)
@@ -214,21 +220,97 @@ static igraph_error_t igraph_i_layout_bcgl(
 
             igraph_matrix_null(&gradients);
 
+            /* ==========================================================
+             * PASS 1: Compute global normalization constant Z
+             *
+             *   Z = sum_{i != j} q(i,j)
+             *   q(i,j) = 1 / (1 + dist(i,j)^2 * b)
+             *
+             * Since q(i,j) = q(j,i), we sum over i < j and double.
+             * ========================================================== */
+            igraph_real_t Z = 0.0;
+            for (igraph_int_t i = 0; i < vcount; i++) {
+                for (igraph_int_t j = i + 1; j < vcount; j++) {
+                    igraph_real_t diff[3];
+                    igraph_real_t dist_sq = 0;
+
+                    for (igraph_int_t d = 0; d < dim; d++) {
+                        diff[d] = MATRIX(*res, i, d) - MATRIX(*res, j, d);
+                        dist_sq += diff[d] * diff[d];
+                    }
+
+                    if (sqrt(dist_sq) < 1e-5) {
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            diff[d] = RNG_UNIF(0, 1e-4);
+                        }
+                        dist_sq = 0;
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            dist_sq += diff[d] * diff[d];
+                        }
+                    }
+
+                    igraph_real_t q = 1.0 / (1.0 + dist_sq * IGRAPH_I_BCGL_T_DIST_B);
+                    Z += 2.0 * q;  /* q_ij + q_ji */
+                }
+            }
+
+            /* ==========================================================
+             * PASS 2: Compute gradients with exact Z normalization
+             *
+             * Probability: p(u,v) = q(u,v) / Z
+             *
+             * Cross-entropy gradient via quotient rule:
+             *   dp(u,v)/dL(u) = (Z * dq - q * dZ/dL(u)) / Z^2
+             *   dZ/dL(u) = 2 * sum_{v != u} dq(u,v)/dL(u)
+             *
+             * Edge loss:   d/dL [-log p] = -(1/p) * dp/dL(u)
+             * Non-edge:    d/dL [-log(1-p)] = (1/(1-p)) * dp/dL(u)
+             * ========================================================== */
             for (igraph_int_t u = 0; u < vcount; u++) {
                 igraph_real_t grad_u[3] = {0, 0, 0};
 
-                /* Compute gradient for vertex u over all pairs (u, v).
-                 * This is the O(|V|^2) loop from Section 3.2.3. */
+                /* Step 2a: Precompute dZ/dL(u) */
+                igraph_real_t dZ_u[3] = {0, 0, 0};
+                for (igraph_int_t v = 0; v < vcount; v++) {
+                    igraph_real_t diff[3];
+                    igraph_real_t dist_sq = 0;
+
+                    if (u == v) continue;
+
+                    for (igraph_int_t d = 0; d < dim; d++) {
+                        diff[d] = MATRIX(*res, u, d) - MATRIX(*res, v, d);
+                        dist_sq += diff[d] * diff[d];
+                    }
+
+                    if (sqrt(dist_sq) < 1e-5) {
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            diff[d] = RNG_UNIF(0, 1e-4);
+                        }
+                        dist_sq = 0;
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            dist_sq += diff[d] * diff[d];
+                        }
+                    }
+
+                    igraph_real_t q = 1.0 / (1.0 + dist_sq * IGRAPH_I_BCGL_T_DIST_B);
+                    igraph_real_t dq_coeff = -2.0 * IGRAPH_I_BCGL_T_DIST_B * q * q;
+
+                    /* dZ/dL(u) = sum_{v != u} (dq_uv/dL(u) + dq_vu/dL(u))
+                     *           = 2 * sum_{v != u} dq_coeff * diff */
+                    for (igraph_int_t d = 0; d < dim; d++) {
+                        dZ_u[d] += 2.0 * dq_coeff * diff[d];
+                    }
+                }
+
+                /* Step 2b: Compute pair forces using exact Z */
                 for (igraph_int_t v = 0; v < vcount; v++) {
                     igraph_real_t diff[3];
                     igraph_real_t dist_sq = 0;
                     igraph_real_t dist;
                     igraph_bool_t connected;
-                    igraph_real_t p_val;
 
                     if (u == v) continue;
 
-                    /* Compute displacement vector and squared distance */
                     for (igraph_int_t d = 0; d < dim; d++) {
                         diff[d] = MATRIX(*res, u, d) - MATRIX(*res, v, d);
                         dist_sq += diff[d] * diff[d];
@@ -236,7 +318,6 @@ static igraph_error_t igraph_i_layout_bcgl(
 
                     dist = sqrt(dist_sq);
 
-                    /* Prevent division by zero when vertices overlap */
                     if (dist < 1e-5) {
                         for (igraph_int_t d = 0; d < dim; d++) {
                             diff[d] = RNG_UNIF(0, 1e-4);
@@ -248,63 +329,55 @@ static igraph_error_t igraph_i_layout_bcgl(
                         dist = sqrt(dist_sq);
                     }
 
-                    /* Compute p(u,v) using the selected distribution
-                     * (Section 3.2.2).
-                     *
-                     * Student's t-distribution (Algorithm BCGL-T):
-                     *   p_T(u,v) = 1 / (Z * (1 + dist^2 * b))
-                     * where b is the degrees of freedom and
-                     *   Z = sum_{i!=j} (1 + dist_ij^2 * b)^{-1}
-                     * is the normalization constant. Z cancels in the
-                     * gradient so we omit it.
-                     */
-                    p_val = 1.0 / (1.0 + dist_sq * IGRAPH_I_BCGL_T_DIST_B);
+                    igraph_real_t q = 1.0 / (1.0 + dist_sq * IGRAPH_I_BCGL_T_DIST_B);
+                    igraph_real_t p = q / Z;
+
+                    if (p < 1e-12) p = 1e-12;
+                    if (p > 1.0 - 1e-12) p = 1.0 - 1e-12;
+
+                    igraph_real_t dq_coeff = -2.0 * IGRAPH_I_BCGL_T_DIST_B * q * q;
+
+                    /* Quotient rule: grad_p = (Z*dq - q*dZ_u) / Z^2 */
+                    igraph_real_t inv_Z = 1.0 / Z;
+                    igraph_real_t q_over_Z2 = q * inv_Z * inv_Z;
+
+                    igraph_real_t grad_p[3];
+                    for (igraph_int_t d = 0; d < dim; d++) {
+                        grad_p[d] = dq_coeff * diff[d] * inv_Z - q_over_Z2 * dZ_u[d];
+                    }
 
                     igraph_are_adjacent(graph, u, v, &connected);
 
-                    /* Compute gradient scalars for C_BC (Eq. 10):
-                     *
-                     * For the t-distribution p = 1/(1+dist^2*b):
-                     *   ∂p/∂L(u) = -2b*p^2 * diff
-                     *
-                     * Edge (Eq. 6 first term):
-                     *   ∂(-log p)/∂L(u) = 2b*p * diff
-                     *   gradient_scalar = 2*b*p * dist
-                     *
-                     * Non-edge (Eq. 6 second term):
-                     *   ∂(-log(1-p))/∂L(u) = -2p/dist^2 * diff
-                     *   gradient_scalar = -2*p / dist
-                     */
-                    igraph_real_t bc_grad;
-                    igraph_real_t length_grad = 0.0;
-
                     if (connected) {
-                        bc_grad = 2.0 * IGRAPH_I_BCGL_T_DIST_B * p_val * dist;
-                        /* C_length gradient (Eq. 9), scaled by lambda_length
-                         * independently of lambda_bc (per Eq. 5, 7) */
-                        length_grad = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
-                                      (dist - 1.0) /
-                                      (ecount > 0 ? ecount : 1);
+                        igraph_real_t loss_coeff = -1.0 / p;
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            grad_u[d] += IGRAPH_I_BCGL_LAMBDA_BC * loss_coeff * grad_p[d];
+                        }
+
+                        igraph_real_t length_grad_scalar = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
+                                                           (dist - 1.0) /
+                                                           (ecount > 0 ? ecount : 1);
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            grad_u[d] += length_grad_scalar * diff[d] / dist;
+                        }
+
 #if IGRAPH_DEBUG_BCGL
-                        _dbg_loss_bc += -log(p_val);
+                        _dbg_loss_bc += -log(p);
                         _dbg_loss_length += (dist - 1.0) * (dist - 1.0);
                         _dbg_sum_edge_dist += dist;
                         _dbg_edge_count++;
 #endif
                     } else {
-                        bc_grad = -2.0 * p_val / dist;
+                        igraph_real_t loss_coeff = 1.0 / (1.0 - p);
+                        for (igraph_int_t d = 0; d < dim; d++) {
+                            grad_u[d] += IGRAPH_I_BCGL_LAMBDA_BC * loss_coeff * grad_p[d];
+                        }
+
 #if IGRAPH_DEBUG_BCGL
-                        _dbg_loss_bc += -log(1.0 - p_val);
+                        _dbg_loss_bc += -log(1.0 - p);
                         _dbg_sum_nonedge_dist += dist;
                         _dbg_nonedge_count++;
 #endif
-                    }
-
-                    /* Accumulate gradients (Eq. 10 applied to each coord) */
-                    for (igraph_int_t d = 0; d < dim; d++) {
-                        igraph_real_t direction = diff[d] / dist;
-                        grad_u[d] += IGRAPH_I_BCGL_LAMBDA_BC * bc_grad * direction
-                                   + length_grad * direction;
                     }
                 }
 
