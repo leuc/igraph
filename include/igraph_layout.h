@@ -158,6 +158,8 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl(const igraph_t *graph,
                                       igraph_int_t niter,
                                       igraph_real_t learning_rate,
                                       igraph_real_t momentum,
+                                      igraph_real_t lambda_compact,
+                                      igraph_real_t lambda_length,
                                       igraph_layout_bcgl_distribution_t distribution,
                                       igraph_bool_t use_bh);
 
@@ -167,6 +169,8 @@ IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl_3d(const igraph_t *graph,
                                        igraph_int_t niter,
                                        igraph_real_t learning_rate,
                                        igraph_real_t momentum,
+                                       igraph_real_t lambda_compact,
+                                       igraph_real_t lambda_length,
                                        igraph_layout_bcgl_distribution_t distribution,
                                        igraph_bool_t use_bh);
 

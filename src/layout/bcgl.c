@@ -124,7 +124,9 @@ static void igraph_i_bcgl_debug_print_iter(
     const igraph_matrix_t *velocity,
     igraph_int_t vcount,
     igraph_int_t dim,
-    igraph_int_t ecount)
+    igraph_int_t ecount,
+    igraph_real_t lambda_compact,
+    igraph_real_t lambda_length)
 {
     igraph_real_t grad_norm = 0.0;
     igraph_real_t vel_norm = 0.0;
@@ -145,8 +147,8 @@ static void igraph_i_bcgl_debug_print_iter(
         loss_compact_norm /= (vcount * vcount);
     }
     igraph_real_t total_c = IGRAPH_I_BCGL_LAMBDA_BC * loss_bc +
-                            IGRAPH_I_BCGL_LAMBDA_COMPACT * loss_compact_norm +
-                            IGRAPH_I_BCGL_LAMBDA_LENGTH * loss_length_norm;
+                            lambda_compact * loss_compact_norm +
+                            lambda_length * loss_length_norm;
 
     igraph_real_t mean_edge = 0.0;
     igraph_real_t mean_nonedge = 0.0;
@@ -201,7 +203,9 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
         igraph_int_t niter,
         igraph_real_t learning_rate,
         igraph_real_t momentum,
-        igraph_layout_bcgl_distribution_t distribution) {
+        igraph_layout_bcgl_distribution_t distribution,
+        igraph_real_t lambda_compact,
+        igraph_real_t lambda_length) {
 
     const igraph_int_t vcount = igraph_vcount(graph);
     const igraph_int_t ecount = igraph_ecount(graph);
@@ -443,7 +447,7 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
                             grad_u[d] += IGRAPH_I_BCGL_LAMBDA_BC * loss_coeff * grad_p[d];
                         }
 
-                        igraph_real_t length_grad_scalar = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
+                        igraph_real_t length_grad_scalar = 2.0 * lambda_length *
                                                            (dist - 1.0) /
                                                            (ecount > 0 ? ecount : 1);
                         for (igraph_int_t d = 0; d < dim; d++) {
@@ -473,7 +477,7 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
                 /* Compact penalty gradient (Eq. 8):
                  *   d C_compact / d L(u) = (2 / |V|^2) * L(u) */
                 for (igraph_int_t d = 0; d < dim; d++) {
-                    grad_u[d] += 2.0 * IGRAPH_I_BCGL_LAMBDA_COMPACT *
+                    grad_u[d] += 2.0 * lambda_compact *
                                  MATRIX(*res, u, d) / (vcount * vcount);
                 }
 
@@ -495,7 +499,8 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
                 _dbg_sum_edge_dist, _dbg_edge_count,
                 _dbg_sum_nonedge_dist, _dbg_nonedge_count,
                 &gradients, &velocity,
-                vcount, dim, ecount);
+                vcount, dim, ecount,
+                lambda_compact, lambda_length);
 #endif
 
             /* Apply momentum-based SGD update (Section 3.2.3):
@@ -599,7 +604,9 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
     igraph_int_t dim,
     igraph_int_t niter,
     igraph_real_t learning_rate,
-    igraph_real_t momentum)
+    igraph_real_t momentum,
+    igraph_real_t lambda_compact,
+    igraph_real_t lambda_length)
 {
     const igraph_int_t vcount = igraph_vcount(graph);
     const igraph_int_t ecount = igraph_ecount(graph);
@@ -718,7 +725,7 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
 
             igraph_real_t corr_coeff = (2.0 * p - 1.0) / (p * (1.0 - p));
 
-            igraph_real_t len_scalar = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
+            igraph_real_t len_scalar = 2.0 * lambda_length *
                                        (dist - 1.0) / (ecount > 0 ? ecount : 1);
 
             const igraph_real_t dZ_u[] = { VECTOR(dZ_x)[u], VECTOR(dZ_y)[u], VECTOR(dZ_z)[u] };
@@ -746,7 +753,7 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
 #endif
         for (igraph_int_t u = 0; u < vcount; u++) {
             for (igraph_int_t d = 0; d < dim; d++) {
-                igraph_real_t val = 2.0 * IGRAPH_I_BCGL_LAMBDA_COMPACT *
+                igraph_real_t val = 2.0 * lambda_compact *
                                      MATRIX(*res, u, d) / (vcount * vcount);
                 MATRIX(gradients, u, d) += val;
 #if IGRAPH_DEBUG_BCGL
@@ -766,7 +773,8 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
             _dbg_sum_edge_dist, _dbg_edge_count,
             _dbg_sum_nonedge_dist, _dbg_nonedge_count,
             &gradients, &velocity,
-            vcount, dim, ecount);
+            vcount, dim, ecount,
+            lambda_compact, lambda_length);
 #endif
 
 #ifdef _OPENMP
@@ -808,6 +816,8 @@ static igraph_error_t igraph_i_layout_bcgl(
     igraph_int_t niter,
     igraph_real_t learning_rate,
     igraph_real_t momentum,
+    igraph_real_t lambda_compact,
+    igraph_real_t lambda_length,
     igraph_layout_bcgl_distribution_t distribution,
     igraph_bool_t use_bh)
 {
@@ -829,6 +839,11 @@ static igraph_error_t igraph_i_layout_bcgl(
 
     if (momentum < 0 || momentum > 1) {
         IGRAPH_ERROR("Momentum must be between 0 and 1 in BCGL layout.",
+                     IGRAPH_EINVAL);
+    }
+
+    if (lambda_compact < 0 || lambda_length < 0) {
+        IGRAPH_ERROR("Lambda values must be non-negative in BCGL layout.",
                      IGRAPH_EINVAL);
     }
 
@@ -860,11 +875,13 @@ static igraph_error_t igraph_i_layout_bcgl(
 
     if (use_bh) {
         IGRAPH_CHECK(igraph_i_layout_bcgl_bh(graph, res, dim, niter,
-                                              learning_rate, momentum));
+                                              learning_rate, momentum,
+                                              lambda_compact, lambda_length));
     } else {
         IGRAPH_CHECK(igraph_i_layout_bcgl_exact(graph, res, use_seed, dim, niter,
                                                  learning_rate, momentum,
-                                                 distribution));
+                                                 distribution,
+                                                 lambda_compact, lambda_length));
     }
 
     return IGRAPH_SUCCESS;
@@ -956,10 +973,14 @@ igraph_error_t igraph_layout_bcgl(const igraph_t *graph,
                                   igraph_int_t niter,
                                   igraph_real_t learning_rate,
                                   igraph_real_t momentum,
+                                  igraph_real_t lambda_compact,
+                                  igraph_real_t lambda_length,
                                   igraph_layout_bcgl_distribution_t distribution,
                                   igraph_bool_t use_bh) {
     return igraph_i_layout_bcgl(graph, res, use_seed, 2, niter,
-                                learning_rate, momentum, distribution, use_bh);
+                                learning_rate, momentum,
+                                lambda_compact, lambda_length,
+                                distribution, use_bh);
 }
 
 /**
@@ -998,8 +1019,12 @@ igraph_error_t igraph_layout_bcgl_3d(const igraph_t *graph,
                                      igraph_int_t niter,
                                      igraph_real_t learning_rate,
                                      igraph_real_t momentum,
+                                     igraph_real_t lambda_compact,
+                                     igraph_real_t lambda_length,
                                      igraph_layout_bcgl_distribution_t distribution,
                                      igraph_bool_t use_bh) {
     return igraph_i_layout_bcgl(graph, res, use_seed, 3, niter,
-                                learning_rate, momentum, distribution, use_bh);
+                                learning_rate, momentum,
+                                lambda_compact, lambda_length,
+                                distribution, use_bh);
 }
