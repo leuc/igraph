@@ -92,6 +92,10 @@
 #define IGRAPH_I_BCGL_LAMBDA_LENGTH 0.01
 #define IGRAPH_I_BCGL_T_DIST_B 1.0
 
+/* Enable per-iteration debug logging to stderr.
+ * Set to 0 to disable (zero overhead). */
+#define IGRAPH_DEBUG_BCGL 1
+
 /**
  * \function igraph_i_layout_bcgl
  * \brief Core BCGL layout implementation (internal).
@@ -188,8 +192,25 @@ static igraph_error_t igraph_i_layout_bcgl(
 
         IGRAPH_MATRIX_INIT_FINALLY(&gradients, vcount, dim);
 
+#if IGRAPH_DEBUG_BCGL
+        fprintf(stderr,
+                "%-6s %-14s %-14s %-14s %-14s %-14s %-14s %-14s %-14s\n",
+                "iter", "C_BC", "C_compact", "C_length", "C_total",
+                "||grad||", "||vel||", "mean_edge", "mean_nonedge");
+#endif
+
         for (igraph_int_t iter = 0; iter < niter; iter++) {
             IGRAPH_ALLOW_INTERRUPTION();
+
+#if IGRAPH_DEBUG_BCGL
+            igraph_real_t _dbg_loss_bc = 0.0;
+            igraph_real_t _dbg_loss_compact = 0.0;
+            igraph_real_t _dbg_loss_length = 0.0;
+            igraph_real_t _dbg_sum_edge_dist = 0.0;
+            igraph_real_t _dbg_sum_nonedge_dist = 0.0;
+            igraph_int_t _dbg_edge_count = 0;
+            igraph_int_t _dbg_nonedge_count = 0;
+#endif
 
             igraph_matrix_null(&gradients);
 
@@ -264,8 +285,19 @@ static igraph_error_t igraph_i_layout_bcgl(
                         length_grad = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
                                       (dist - 1.0) /
                                       (ecount > 0 ? ecount : 1);
+#if IGRAPH_DEBUG_BCGL
+                        _dbg_loss_bc += -log(p_val);
+                        _dbg_loss_length += (dist - 1.0) * (dist - 1.0);
+                        _dbg_sum_edge_dist += dist;
+                        _dbg_edge_count++;
+#endif
                     } else {
                         bc_grad = -2.0 * p_val / dist;
+#if IGRAPH_DEBUG_BCGL
+                        _dbg_loss_bc += -log(1.0 - p_val);
+                        _dbg_sum_nonedge_dist += dist;
+                        _dbg_nonedge_count++;
+#endif
                     }
 
                     /* Accumulate gradients (Eq. 10 applied to each coord) */
@@ -283,10 +315,56 @@ static igraph_error_t igraph_i_layout_bcgl(
                                  MATRIX(*res, u, d) / (vcount * vcount);
                 }
 
+#if IGRAPH_DEBUG_BCGL
+                for (igraph_int_t d = 0; d < dim; d++) {
+                    _dbg_loss_compact += MATRIX(*res, u, d) * MATRIX(*res, u, d);
+                }
+#endif
+
                 for (igraph_int_t d = 0; d < dim; d++) {
                     MATRIX(gradients, u, d) = grad_u[d];
                 }
             }
+
+#if IGRAPH_DEBUG_BCGL
+            {
+                igraph_real_t _dbg_grad_norm = 0.0;
+                igraph_real_t _dbg_vel_norm = 0.0;
+                igraph_real_t _dbg_total_c;
+                igraph_real_t _dbg_mean_edge = 0.0;
+                igraph_real_t _dbg_mean_nonedge = 0.0;
+                igraph_int_t _i, _d;
+
+                for (_i = 0; _i < vcount; _i++) {
+                    for (_d = 0; _d < dim; _d++) {
+                        igraph_real_t _g = MATRIX(gradients, _i, _d);
+                        _dbg_grad_norm += _g * _g;
+                        igraph_real_t _v = MATRIX(velocity, _i, _d);
+                        _dbg_vel_norm += _v * _v;
+                    }
+                }
+                _dbg_grad_norm = sqrt(_dbg_grad_norm);
+                _dbg_vel_norm = sqrt(_dbg_vel_norm);
+
+                _dbg_loss_length /= (ecount > 0 ? ecount : 1);
+                if (vcount > 0)
+                    _dbg_loss_compact /= (vcount * vcount);
+                _dbg_total_c = IGRAPH_I_BCGL_LAMBDA_BC * _dbg_loss_bc +
+                               IGRAPH_I_BCGL_LAMBDA_COMPACT * _dbg_loss_compact +
+                               IGRAPH_I_BCGL_LAMBDA_LENGTH * _dbg_loss_length;
+
+                if (_dbg_edge_count > 0)
+                    _dbg_mean_edge = _dbg_sum_edge_dist / _dbg_edge_count;
+                if (_dbg_nonedge_count > 0)
+                    _dbg_mean_nonedge = _dbg_sum_nonedge_dist / _dbg_nonedge_count;
+
+                fprintf(stderr,
+                        "%-6" IGRAPH_PRId " %-14.6e %-14.6e %-14.6e %-14.6e %-14.6e %-14.6e %-14.4f %-14.4f\n",
+                        iter, _dbg_loss_bc, _dbg_loss_compact, _dbg_loss_length,
+                        _dbg_total_c, _dbg_grad_norm, _dbg_vel_norm,
+                        _dbg_mean_edge, _dbg_mean_nonedge);
+            }
+#endif
 
             /* Apply momentum-based SGD update (Section 3.2.3):
              *   velocity(t) = momentum * velocity(t-1) - lr * gradient(t)
