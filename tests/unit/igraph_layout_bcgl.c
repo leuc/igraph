@@ -19,57 +19,74 @@
 #include <igraph.h>
 #include "test_utilities.h"
 
+static void test_exact(igraph_t *g, igraph_matrix_t *result,
+                       igraph_bool_t use_seed, igraph_int_t niter,
+                       igraph_real_t lr, igraph_real_t mom,
+                       igraph_layout_bcgl_distribution_t dist)
+{
+    IGRAPH_ASSERT(igraph_layout_bcgl(g, result, use_seed, niter, lr, mom,
+                                     dist, /*use_bh*/ 0) == IGRAPH_SUCCESS);
+}
+
+static void test_bh(igraph_t *g, igraph_matrix_t *result,
+                    igraph_bool_t use_seed, igraph_int_t niter,
+                    igraph_real_t lr, igraph_real_t mom,
+                    igraph_layout_bcgl_distribution_t dist)
+{
+    IGRAPH_ASSERT(igraph_layout_bcgl(g, result, use_seed, niter, lr, mom,
+                                     dist, /*use_bh*/ 1) == IGRAPH_SUCCESS);
+}
+
 int main(void) {
     igraph_t g;
     igraph_matrix_t result;
 
     igraph_rng_seed(igraph_rng_default(), 42);
 
-    printf("Empty graph.\n");
+    /* ---- Exact path tests ---- */
+    printf("Exact: Empty graph.\n");
     igraph_small(&g, 0, 0, -1);
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_bcgl(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 10, /*learning_rate*/ 0.01, /*momentum*/ 0.9,
-                  IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T) == IGRAPH_SUCCESS);
+    test_exact(&g, &result, /*use_seed*/ 0, /*niter*/ 10, /*lr*/ 0.01, /*mom*/ 0.9,
+               IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
-    printf("Singleton graph.\n");
+    printf("Exact: Singleton graph.\n");
     igraph_small(&g, 1, 0, -1);
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_bcgl(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 10, /*learning_rate*/ 0.01, /*momentum*/ 0.9,
-                  IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T) == IGRAPH_SUCCESS);
+    test_exact(&g, &result, /*use_seed*/ 0, /*niter*/ 10, /*lr*/ 0.01, /*mom*/ 0.9,
+               IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
-    printf("Ring graph of 10 vertices.\n");
+    printf("Exact: Ring graph of 10 vertices.\n");
     igraph_ring(&g, 10, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
-    IGRAPH_ASSERT(igraph_layout_bcgl(&g, &result, /*use_seed*/ 0,
-                  /*niter*/ 100, /*learning_rate*/ 0.01, /*momentum*/ 0.9,
-                  IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T) == IGRAPH_SUCCESS);
+    test_exact(&g, &result, /*use_seed*/ 0, /*niter*/ 100, /*lr*/ 0.01, /*mom*/ 0.9,
+               IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
     IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 10);
     IGRAPH_ASSERT(igraph_matrix_ncol(&result) == 2);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
-    printf("Ring graph of 10 vertices, 3D.\n");
+    printf("Exact: Ring graph of 10 vertices, 3D.\n");
     igraph_ring(&g, 10, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     IGRAPH_ASSERT(igraph_layout_bcgl_3d(&g, &result, /*use_seed*/ 0,
-                   /*niter*/ 100, /*learning_rate*/ 0.01, /*momentum*/ 0.9,
-                   IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T) == IGRAPH_SUCCESS);
+                   /*niter*/ 100, /*lr*/ 0.01, /*mom*/ 0.9,
+                   IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
+                   /*use_bh*/ 0) == IGRAPH_SUCCESS);
     IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 10);
     IGRAPH_ASSERT(igraph_matrix_ncol(&result) == 3);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
-    printf("Test with seed.\n");
+    printf("Exact: Test with seed.\n");
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 5, 2);
     MATRIX(result, 0, 0) = 0.1; MATRIX(result, 0, 1) = 0.2;
@@ -77,20 +94,80 @@ int main(void) {
     MATRIX(result, 2, 0) = 0.5; MATRIX(result, 2, 1) = 0.6;
     MATRIX(result, 3, 0) = 0.7; MATRIX(result, 3, 1) = 0.8;
     MATRIX(result, 4, 0) = 0.9; MATRIX(result, 4, 1) = 1.0;
-    IGRAPH_ASSERT(igraph_layout_bcgl(&g, &result, /*use_seed*/ 1,
-                  /*niter*/ 10, /*learning_rate*/ 0.01, /*momentum*/ 0.9,
-                  IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T) == IGRAPH_SUCCESS);
+    test_exact(&g, &result, /*use_seed*/ 1, /*niter*/ 10, /*lr*/ 0.01, /*mom*/ 0.9,
+               IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
     IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 5);
     IGRAPH_ASSERT(igraph_matrix_ncol(&result) == 2);
     print_matrix(&result);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
+    /* ---- BH path tests ---- */
+    printf("BH: Empty graph.\n");
+    igraph_small(&g, 0, 0, -1);
+    igraph_matrix_init(&result, 0, 0);
+    test_bh(&g, &result, /*use_seed*/ 0, /*niter*/ 10, /*lr*/ 0.01, /*mom*/ 0.9,
+            IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
+    print_matrix(&result);
+    igraph_matrix_destroy(&result);
+    igraph_destroy(&g);
+
+    printf("BH: Singleton graph.\n");
+    igraph_small(&g, 1, 0, -1);
+    igraph_matrix_init(&result, 0, 0);
+    test_bh(&g, &result, /*use_seed*/ 0, /*niter*/ 10, /*lr*/ 0.01, /*mom*/ 0.9,
+            IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
+    print_matrix(&result);
+    igraph_matrix_destroy(&result);
+    igraph_destroy(&g);
+
+    printf("BH: Ring graph of 10 vertices.\n");
+    igraph_ring(&g, 10, IGRAPH_UNDIRECTED, 0, 1);
+    igraph_matrix_init(&result, 0, 0);
+    test_bh(&g, &result, /*use_seed*/ 0, /*niter*/ 100, /*lr*/ 0.01, /*mom*/ 0.9,
+            IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
+    IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 10);
+    IGRAPH_ASSERT(igraph_matrix_ncol(&result) == 2);
+    print_matrix(&result);
+    igraph_matrix_destroy(&result);
+    igraph_destroy(&g);
+
+    printf("BH: Ring graph of 10 vertices, 3D.\n");
+    igraph_ring(&g, 10, IGRAPH_UNDIRECTED, 0, 1);
+    igraph_matrix_init(&result, 0, 0);
+    IGRAPH_ASSERT(igraph_layout_bcgl_3d(&g, &result, /*use_seed*/ 0,
+                   /*niter*/ 100, /*lr*/ 0.01, /*mom*/ 0.9,
+                   IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
+                   /*use_bh*/ 1) == IGRAPH_SUCCESS);
+    IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 10);
+    IGRAPH_ASSERT(igraph_matrix_ncol(&result) == 3);
+    print_matrix(&result);
+    igraph_matrix_destroy(&result);
+    igraph_destroy(&g);
+
+    printf("BH: Test with seed.\n");
+    igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
+    igraph_matrix_init(&result, 5, 2);
+    MATRIX(result, 0, 0) = 0.1; MATRIX(result, 0, 1) = 0.2;
+    MATRIX(result, 1, 0) = 0.3; MATRIX(result, 1, 1) = 0.4;
+    MATRIX(result, 2, 0) = 0.5; MATRIX(result, 2, 1) = 0.6;
+    MATRIX(result, 3, 0) = 0.7; MATRIX(result, 3, 1) = 0.8;
+    MATRIX(result, 4, 0) = 0.9; MATRIX(result, 4, 1) = 1.0;
+    test_bh(&g, &result, /*use_seed*/ 1, /*niter*/ 10, /*lr*/ 0.01, /*mom*/ 0.9,
+            IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T);
+    IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 5);
+    IGRAPH_ASSERT(igraph_matrix_ncol(&result) == 2);
+    print_matrix(&result);
+    igraph_matrix_destroy(&result);
+    igraph_destroy(&g);
+
+    /* ---- Error tests (use exact path) ---- */
     printf("Test error: invalid niter.\n");
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, -1, 0.01, 0.9,
-                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T), IGRAPH_EINVAL);
+                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
+                /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
@@ -98,7 +175,8 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, 10, 0.0, 0.9,
-                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T), IGRAPH_EINVAL);
+                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
+                /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
@@ -106,7 +184,8 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, 10, 0.01, 1.5,
-                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T), IGRAPH_EINVAL);
+                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
+                /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
@@ -114,7 +193,8 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 3, 2);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 1, 10, 0.01, 0.9,
-                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T), IGRAPH_EINVAL);
+                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
+                /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 
@@ -122,7 +202,8 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, 10, 0.01, 0.9,
-                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_GAUSSIAN), IGRAPH_UNIMPLEMENTED);
+                IGRAPH_LAYOUT_BCGL_DISTRIBUTION_GAUSSIAN,
+                /*use_bh*/ 0), IGRAPH_UNIMPLEMENTED);
     igraph_matrix_destroy(&result);
     igraph_destroy(&g);
 

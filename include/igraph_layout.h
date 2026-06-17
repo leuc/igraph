@@ -187,20 +187,22 @@ IGRAPH_EXPERIMENTAL IGRAPH_EXPORT igraph_error_t igraph_layout_umap_compute_weig
                                                 igraph_vector_t *weights);
 
 IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl(const igraph_t *graph,
-                                     igraph_matrix_t *res,
-                                     igraph_bool_t use_seed,
-                                     igraph_int_t niter,
-                                     igraph_real_t learning_rate,
-                                     igraph_real_t momentum,
-                                     igraph_layout_bcgl_distribution_t distribution);
-
-IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl_3d(const igraph_t *graph,
                                       igraph_matrix_t *res,
                                       igraph_bool_t use_seed,
                                       igraph_int_t niter,
                                       igraph_real_t learning_rate,
                                       igraph_real_t momentum,
-                                      igraph_layout_bcgl_distribution_t distribution);
+                                      igraph_layout_bcgl_distribution_t distribution,
+                                      igraph_bool_t use_bh);
+
+IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl_3d(const igraph_t *graph,
+                                       igraph_matrix_t *res,
+                                       igraph_bool_t use_seed,
+                                       igraph_int_t niter,
+                                       igraph_real_t learning_rate,
+                                       igraph_real_t momentum,
+                                       igraph_layout_bcgl_distribution_t distribution,
+                                       igraph_bool_t use_bh);
 
 IGRAPH_EXPORT igraph_error_t igraph_layout_bhtsne(const igraph_t *graph,
                                                 igraph_matrix_t *res,

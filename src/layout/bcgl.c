@@ -82,6 +82,8 @@
 
 #include "igraph_progress.h"
 #include "igraph_step.h"
+#include "igraph_barnes_hut.h"
+#include "igraph_conversion.h"
 
 #include <math.h>
 
@@ -133,7 +135,7 @@
  * The C_compact gradient (Eq. 8) is:
  *   d C_compact / d L(u) = (2 / |V|^2) * L(u)
  */
-static igraph_error_t igraph_i_layout_bcgl(
+static igraph_error_t igraph_i_layout_bcgl_exact(
         const igraph_t *graph,
         igraph_matrix_t *res,
         igraph_bool_t use_seed,
@@ -497,6 +499,311 @@ static igraph_error_t igraph_i_layout_bcgl(
     return IGRAPH_SUCCESS;
 }
 
+/* =========================================================================
+ * User data for BH non-edge force kernel
+ * ========================================================================= */
+typedef struct {
+    igraph_real_t Z;
+    igraph_real_t inv_Z;
+    igraph_real_t b;
+    igraph_real_t lambda_bc;
+    const igraph_real_t *dZ_x;
+    const igraph_real_t *dZ_y;
+    const igraph_real_t *dZ_z;
+} igraph_i_bcgl_bh_data_t;
+
+/* BH kernel: compute Z contribution (accumulates into force[0]) */
+static void bcgl_z_kernel(
+    const igraph_bh_point_t *p1, const igraph_bh_point_t *p2,
+    igraph_real_t dx, igraph_real_t dy, igraph_real_t dz,
+    igraph_real_t dist_sq, igraph_real_t force[3], void *user_data)
+{
+    igraph_real_t b = *(const igraph_real_t*)user_data;
+    igraph_real_t q = 1.0 / (1.0 + dist_sq * b);
+    igraph_real_t scale = (p2->id < 0) ? p2->mass : 1.0;
+    force[0] += q * scale;
+}
+
+/* BH kernel: compute dZ_u contribution */
+static void bcgl_dZ_kernel(
+    const igraph_bh_point_t *p1, const igraph_bh_point_t *p2,
+    igraph_real_t dx, igraph_real_t dy, igraph_real_t dz,
+    igraph_real_t dist_sq, igraph_real_t force[3], void *user_data)
+{
+    igraph_real_t b = *(const igraph_real_t*)user_data;
+    igraph_real_t q = 1.0 / (1.0 + dist_sq * b);
+    igraph_real_t dq_coeff = -2.0 * b * q * q;
+    igraph_real_t scale = (p2->id < 0) ? p2->mass : 1.0;
+    force[0] += 2.0 * dq_coeff * dx * scale;
+    force[1] += 2.0 * dq_coeff * dy * scale;
+    if (p1->id >= 0) force[2] += 2.0 * dq_coeff * dz * scale;
+}
+
+/* BH kernel: compute non-edge force contribution for all pairs */
+static void bcgl_nonedge_kernel(
+    const igraph_bh_point_t *p1, const igraph_bh_point_t *p2,
+    igraph_real_t dx, igraph_real_t dy, igraph_real_t dz,
+    igraph_real_t dist_sq, igraph_real_t force[3], void *user_data)
+{
+    igraph_i_bcgl_bh_data_t *ud = (igraph_i_bcgl_bh_data_t*)user_data;
+    igraph_int_t u = p1->id;
+    igraph_real_t q = 1.0 / (1.0 + dist_sq * ud->b);
+    igraph_real_t p = q * ud->inv_Z;
+    igraph_real_t inv_one_minus_p = 1.0 / (1.0 - p);
+    igraph_real_t dq_coeff = -2.0 * ud->b * q * q;
+    igraph_real_t dq_over_Z = dq_coeff * ud->inv_Z;
+    igraph_real_t q_over_Z2 = q * ud->inv_Z * ud->inv_Z;
+    igraph_real_t scale = (p2->id < 0) ? p2->mass : 1.0;
+
+    force[0] = ud->lambda_bc * inv_one_minus_p *
+               (dq_over_Z * dx - q_over_Z2 * ud->dZ_x[u]) * scale;
+    force[1] = ud->lambda_bc * inv_one_minus_p *
+               (dq_over_Z * dy - q_over_Z2 * ud->dZ_y[u]) * scale;
+    if (p1->id >= 0) {
+        force[2] = ud->lambda_bc * inv_one_minus_p *
+                   (dq_over_Z * dz - q_over_Z2 * ud->dZ_z[u]) * scale;
+    }
+}
+
+/* =========================================================================
+ * BH-accelerated BCGL gradient computation
+ * ========================================================================= */
+static igraph_error_t igraph_i_layout_bcgl_bh(
+    const igraph_t *graph,
+    igraph_matrix_t *res,
+    igraph_int_t dim,
+    igraph_int_t niter,
+    igraph_real_t learning_rate,
+    igraph_real_t momentum)
+{
+    const igraph_int_t vcount = igraph_vcount(graph);
+    const igraph_int_t ecount = igraph_ecount(graph);
+
+    /* Tiny graphs: no pairs to process, nothing to do */
+    if (vcount < 2) {
+        return IGRAPH_SUCCESS;
+    }
+
+    /* Build edge list for correction pass (flat alternating from/to) */
+    igraph_vector_int_t edgelist;
+    IGRAPH_VECTOR_INT_INIT_FINALLY(&edgelist, 0);
+    if (ecount > 0) {
+        IGRAPH_CHECK(igraph_get_edgelist(graph, &edgelist, /*bycol=*/ 0));
+    }
+
+    /* BH tree setup */
+    igraph_bh_tree_t tree;
+    igraph_integer_t max_level, leaf_capacity;
+    igraph_bh_tree_get_scaling_params(vcount, dim, &max_level, &leaf_capacity);
+    igraph_bh_tree_init(&tree, dim, 0.6, max_level, leaf_capacity);
+
+    igraph_matrix_t velocity;
+    igraph_matrix_t gradients;
+    igraph_matrix_t z_forces, dZ_forces;
+
+    IGRAPH_MATRIX_INIT_FINALLY(&velocity, vcount, dim);
+    igraph_matrix_null(&velocity);
+
+    IGRAPH_MATRIX_INIT_FINALLY(&gradients, vcount, dim);
+
+    IGRAPH_MATRIX_INIT_FINALLY(&z_forces, vcount, dim);
+    IGRAPH_MATRIX_INIT_FINALLY(&dZ_forces, vcount, dim);
+
+    /* Per-vertex dZ storage (always allocate dZ_z for kernel safety) */
+    igraph_vector_t dZ_x, dZ_y, dZ_z;
+    IGRAPH_VECTOR_INIT_FINALLY(&dZ_x, vcount);
+    IGRAPH_VECTOR_INIT_FINALLY(&dZ_y, vcount);
+    IGRAPH_VECTOR_INIT_FINALLY(&dZ_z, vcount);
+
+    igraph_i_bcgl_bh_data_t ud;
+    ud.b = IGRAPH_I_BCGL_T_DIST_B;
+    ud.lambda_bc = IGRAPH_I_BCGL_LAMBDA_BC;
+
+    IGRAPH_PROGRESS("BCGL layout", 0, NULL);
+    for (igraph_int_t iter = 0; iter < niter; iter++) {
+        IGRAPH_ALLOW_INTERRUPTION();
+        IGRAPH_PROGRESS("BCGL layout", 100.0 * iter / niter, NULL);
+        IGRAPH_STEP(res, NULL);
+
+        igraph_matrix_null(&gradients);
+        igraph_matrix_null(&z_forces);
+        igraph_matrix_null(&dZ_forces);
+
+        /* Rebuild BH tree from current positions */
+        igraph_bh_tree_build(&tree, res, NULL);
+
+        /* 1. Compute normalization constant Z via BH */
+        igraph_bh_apply_repulsion_from_tree(&tree, &z_forces, bcgl_z_kernel, &ud.b);
+        {
+            igraph_real_t Z_sum = 0.0;
+            for (igraph_int_t i = 0; i < vcount; i++) {
+                Z_sum += MATRIX(z_forces, i, 0);
+            }
+            ud.Z = Z_sum / 2.0;
+            ud.inv_Z = 1.0 / ud.Z;
+        }
+
+        /* 2. Compute dZ_u for all u via BH */
+        igraph_bh_apply_repulsion_from_tree(&tree, &dZ_forces, bcgl_dZ_kernel, &ud.b);
+        ud.dZ_x = VECTOR(dZ_x);
+        ud.dZ_y = VECTOR(dZ_y);
+        ud.dZ_z = VECTOR(dZ_z);
+        for (igraph_int_t i = 0; i < vcount; i++) {
+            VECTOR(dZ_x)[i] = MATRIX(dZ_forces, i, 0);
+            VECTOR(dZ_y)[i] = MATRIX(dZ_forces, i, 1);
+            VECTOR(dZ_z)[i] = (dim == 3) ? MATRIX(dZ_forces, i, 2) : 0.0;
+        }
+
+        /* 3. Compute non-edge (all-pairs repulsive) forces via BH */
+        igraph_bh_apply_repulsion_from_tree(&tree, &gradients, bcgl_nonedge_kernel, &ud);
+
+        /* 4. Edge correction: subtract BH non-edge, add correct edge force + length penalty */
+        for (igraph_int_t e = 0; e < ecount; e++) {
+            igraph_int_t u = VECTOR(edgelist)[2 * e];
+            igraph_int_t v = VECTOR(edgelist)[2 * e + 1];
+            igraph_real_t diff[3];
+            igraph_real_t dist_sq = 0;
+
+            for (igraph_int_t d = 0; d < dim; d++) {
+                diff[d] = MATRIX(*res, u, d) - MATRIX(*res, v, d);
+                dist_sq += diff[d] * diff[d];
+            }
+            igraph_real_t dist = sqrt(dist_sq);
+            if (dist < 1e-12) dist = 1e-12;
+
+            igraph_real_t q = 1.0 / (1.0 + dist_sq * ud.b);
+            igraph_real_t p = q * ud.inv_Z;
+            igraph_real_t dq_coeff = -2.0 * ud.b * q * q;
+            igraph_real_t dq_over_Z = dq_coeff * ud.inv_Z;
+            igraph_real_t q_over_Z2 = q * ud.inv_Z * ud.inv_Z;
+
+            /* correction coefficient: (-1/p) - (1/(1-p)) = (2p-1) / (p*(1-p)) */
+            igraph_real_t corr_coeff = (2.0 * p - 1.0) / (p * (1.0 - p));
+
+            /* length penalty scalar */
+            igraph_real_t len_scalar = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
+                                       (dist - 1.0) / (ecount > 0 ? ecount : 1);
+
+            const igraph_real_t dZ_u[] = { VECTOR(dZ_x)[u], VECTOR(dZ_y)[u], VECTOR(dZ_z)[u] };
+            const igraph_real_t dZ_v[] = { VECTOR(dZ_x)[v], VECTOR(dZ_y)[v], VECTOR(dZ_z)[v] };
+
+            for (igraph_int_t d = 0; d < dim; d++) {
+                igraph_real_t grad_p_u = dq_over_Z * diff[d] - q_over_Z2 * dZ_u[d];
+                igraph_real_t grad_p_v = -dq_over_Z * diff[d] - q_over_Z2 * dZ_v[d];
+                igraph_real_t dir = diff[d] / dist;
+
+                MATRIX(gradients, u, d) += ud.lambda_bc * corr_coeff * grad_p_u + len_scalar * dir;
+                MATRIX(gradients, v, d) += ud.lambda_bc * corr_coeff * grad_p_v - len_scalar * dir;
+            }
+        }
+
+        /* 5. Compact penalty (Eq. 8) */
+        for (igraph_int_t u = 0; u < vcount; u++) {
+            for (igraph_int_t d = 0; d < dim; d++) {
+                MATRIX(gradients, u, d) += 2.0 * IGRAPH_I_BCGL_LAMBDA_COMPACT *
+                                            MATRIX(*res, u, d) / (vcount * vcount);
+            }
+        }
+
+        /* 6. Momentum-based SGD update */
+        for (igraph_int_t u = 0; u < vcount; u++) {
+            for (igraph_int_t d = 0; d < dim; d++) {
+                MATRIX(velocity, u, d) = momentum * MATRIX(velocity, u, d) -
+                                         learning_rate * MATRIX(gradients, u, d);
+                MATRIX(*res, u, d) += MATRIX(velocity, u, d);
+            }
+        }
+    }
+    IGRAPH_PROGRESS("BCGL layout", 100, NULL);
+
+    /* Cleanup in reverse order of FINALLY pushes */
+    igraph_vector_destroy(&dZ_z);
+    igraph_vector_destroy(&dZ_y);
+    igraph_vector_destroy(&dZ_x);
+    igraph_matrix_destroy(&dZ_forces);
+    igraph_matrix_destroy(&z_forces);
+    igraph_matrix_destroy(&gradients);
+    igraph_matrix_destroy(&velocity);
+    igraph_bh_tree_destroy(&tree);
+    igraph_vector_int_destroy(&edgelist);
+    IGRAPH_FINALLY_CLEAN(8);
+
+    return IGRAPH_SUCCESS;
+}
+
+/* =========================================================================
+ * Dispatcher: validate, seed, then dispatch to exact or BH
+ * ========================================================================= */
+static igraph_error_t igraph_i_layout_bcgl(
+    const igraph_t *graph,
+    igraph_matrix_t *res,
+    igraph_bool_t use_seed,
+    igraph_int_t dim,
+    igraph_int_t niter,
+    igraph_real_t learning_rate,
+    igraph_real_t momentum,
+    igraph_layout_bcgl_distribution_t distribution,
+    igraph_bool_t use_bh)
+{
+    const igraph_int_t vcount = igraph_vcount(graph);
+
+    if (niter < 0) {
+        IGRAPH_ERROR("Number of iterations must be non-negative in "
+                     "BCGL layout.", IGRAPH_EINVAL);
+    }
+
+    if (dim != 2 && dim != 3) {
+        IGRAPH_ERROR("Dimension must be 2 or 3 in BCGL layout.", IGRAPH_EINVAL);
+    }
+
+    if (learning_rate <= 0) {
+        IGRAPH_ERROR("Learning rate must be positive in BCGL layout.",
+                     IGRAPH_EINVAL);
+    }
+
+    if (momentum < 0 || momentum > 1) {
+        IGRAPH_ERROR("Momentum must be between 0 and 1 in BCGL layout.",
+                     IGRAPH_EINVAL);
+    }
+
+    if (distribution != IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T &&
+        distribution != IGRAPH_LAYOUT_BCGL_DISTRIBUTION_GAUSSIAN) {
+        IGRAPH_ERROR("Invalid BCGL distribution.", IGRAPH_EINVAL);
+    }
+
+    if (distribution == IGRAPH_LAYOUT_BCGL_DISTRIBUTION_GAUSSIAN) {
+        IGRAPH_ERROR("Gaussian distribution is not yet implemented in "
+                     "BCGL layout.", IGRAPH_UNIMPLEMENTED);
+    }
+
+    /* Initialize layout: random positions in [-1, 1] or use seed */
+    if (!use_seed) {
+        IGRAPH_CHECK(igraph_matrix_resize(res, vcount, dim));
+        for (igraph_int_t i = 0; i < vcount; i++) {
+            for (igraph_int_t d = 0; d < dim; d++) {
+                MATRIX(*res, i, d) = RNG_UNIF(-1.0, 1.0);
+            }
+        }
+    } else {
+        if (igraph_matrix_nrow(res) != vcount ||
+            igraph_matrix_ncol(res) != dim) {
+            IGRAPH_ERROR("Invalid start position matrix size in "
+                         "BCGL layout.", IGRAPH_EINVAL);
+        }
+    }
+
+    if (use_bh) {
+        IGRAPH_CHECK(igraph_i_layout_bcgl_bh(graph, res, dim, niter,
+                                              learning_rate, momentum));
+    } else {
+        IGRAPH_CHECK(igraph_i_layout_bcgl_exact(graph, res, use_seed, dim, niter,
+                                                 learning_rate, momentum,
+                                                 distribution));
+    }
+
+    return IGRAPH_SUCCESS;
+}
+
 /**
  * \ingroup layout
  * \function igraph_layout_bcgl
@@ -583,9 +890,10 @@ igraph_error_t igraph_layout_bcgl(const igraph_t *graph,
                                   igraph_int_t niter,
                                   igraph_real_t learning_rate,
                                   igraph_real_t momentum,
-                                  igraph_layout_bcgl_distribution_t distribution) {
+                                  igraph_layout_bcgl_distribution_t distribution,
+                                  igraph_bool_t use_bh) {
     return igraph_i_layout_bcgl(graph, res, use_seed, 2, niter,
-                                learning_rate, momentum, distribution);
+                                learning_rate, momentum, distribution, use_bh);
 }
 
 /**
@@ -624,7 +932,8 @@ igraph_error_t igraph_layout_bcgl_3d(const igraph_t *graph,
                                      igraph_int_t niter,
                                      igraph_real_t learning_rate,
                                      igraph_real_t momentum,
-                                     igraph_layout_bcgl_distribution_t distribution) {
+                                     igraph_layout_bcgl_distribution_t distribution,
+                                     igraph_bool_t use_bh) {
     return igraph_i_layout_bcgl(graph, res, use_seed, 3, niter,
-                                learning_rate, momentum, distribution);
+                                learning_rate, momentum, distribution, use_bh);
 }
