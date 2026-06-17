@@ -53,9 +53,10 @@
  *   d C_BC / d L(u) = -sum_edges [1/p * dp/dL(u)]
  *                    + sum_non-edges [1/(1-p) * dp/dL(u)]
  *
- * The code computes the negated gradient (force) directly:
- *   Edges:       force = p * dist       (attractive)
- *   Non-edges:   force = -(1-p)/dist    (repulsive)
+ * The code computes the gradient of C_BC directly. For the t-distribution
+ * p = 1/(1+dist^2*b), the gradient scalar (in the diff direction) is:
+ *   Edges:       2*b*p * dist            (attractive after SGD subtraction)
+ *   Non-edges:   -2*p / dist             (repulsive after SGD subtraction)
  *
  * The paper also describes a multilevel strategy (Section 3.2.4, (2))
  * where the graph is coarsened into G_1, G_2, ..., G_K with decreasing
@@ -105,18 +106,19 @@
  *   p_T(u,v) = 1 / (Z * (1 + dist^2 * b))
  *
  * The gradient of C_BC w.r.t. L(u) for a pair (u,v) is (Eq. 10):
- *   For edges:      gradient = -p * dist * (diff/dist)     (attraction)
- *   For non-edges:  gradient = +(1-p)/dist * (diff/dist)   (repulsion)
+ *   For edges:      gradient = 2*b*p * diff      (attractive, toward v)
+ *   For non-edges:  gradient = -2*p/dist^2 * diff (repulsive, away from v)
+ * where p = 1/(1+dist^2*b) and diff = L(u)-L(v).
  *
- * The code computes the force (negated gradient) directly:
- *   Edges:       force = p * dist
- *   Non-edges:   force = -(1-p)/dist
+ * The code computes the gradient scalar (in the diff/dist unit direction):
+ *   Edges:       2*b*p * dist
+ *   Non-edges:   -2*p / dist
  *
- * The compact term gradient (Eq. 8) is:
- *   d C_compact / d L(u) = (2 / |V|^2) * L(u)
- *
- * The length term gradient (Eq. 9) is applied only to edges:
+ * The C_length gradient (Eq. 9) is applied separately to edges:
  *   d C_length / d L(u) = (2 / |E|) * (||L(u)-L(v)|| - 1) * (diff / dist)
+ *
+ * The C_compact gradient (Eq. 8) is:
+ *   d C_compact / d L(u) = (2 / |V|^2) * L(u)
  */
 static igraph_error_t igraph_i_layout_bcgl(
         const igraph_t *graph,
@@ -202,7 +204,6 @@ static igraph_error_t igraph_i_layout_bcgl(
                     igraph_real_t dist;
                     igraph_bool_t connected;
                     igraph_real_t p_val;
-                    igraph_real_t force;
 
                     if (u == v) continue;
 
@@ -240,42 +241,46 @@ static igraph_error_t igraph_i_layout_bcgl(
 
                     igraph_are_adjacent(graph, u, v, &connected);
 
-                    /* Compute force (negated gradient of Eq. 10):
+                    /* Compute gradient scalars for C_BC (Eq. 10):
                      *
-                     * For connected vertices (edges, Eq. 6 first term):
-                     *   Gradient = -p * dist * (diff/dist), so
-                     *   force = p * dist (attractive, toward v).
-                     *   We also add the length regularization gradient
-                     *   (Eq. 9): lambda_length * (dist - 1) / |E|.
+                     * For the t-distribution p = 1/(1+dist^2*b):
+                     *   ∂p/∂L(u) = -2b*p^2 * diff
                      *
-                     * For non-connected vertices (non-edges, Eq. 6 second term):
-                     *   Gradient = +(1-p)/dist * (diff/dist), so
-                     *   force = -(1-p)/dist (repulsive, away from v).
+                     * Edge (Eq. 6 first term):
+                     *   ∂(-log p)/∂L(u) = 2b*p * diff
+                     *   gradient_scalar = 2*b*p * dist
+                     *
+                     * Non-edge (Eq. 6 second term):
+                     *   ∂(-log(1-p))/∂L(u) = -2p/dist^2 * diff
+                     *   gradient_scalar = -2*p / dist
                      */
+                    igraph_real_t bc_grad;
+                    igraph_real_t length_grad = 0.0;
+
                     if (connected) {
-                        /* Attractive force from C_BC (Eq. 6) + C_length (Eq. 9) */
-                        force = p_val * dist;
-                        force += IGRAPH_I_BCGL_LAMBDA_LENGTH * (dist - 1.0) /
-                                 (ecount > 0 ? ecount : 1);
+                        bc_grad = 2.0 * IGRAPH_I_BCGL_T_DIST_B * p_val * dist;
+                        /* C_length gradient (Eq. 9), scaled by lambda_length
+                         * independently of lambda_bc (per Eq. 5, 7) */
+                        length_grad = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
+                                      (dist - 1.0) /
+                                      (ecount > 0 ? ecount : 1);
                     } else {
-                        /* Repulsive force from C_BC (Eq. 6) */
-                        force = -(1.0 - p_val) / dist;
+                        bc_grad = -2.0 * p_val / dist;
                     }
 
-                    /* Accumulate gradient: lambda_bc * force * unit_direction
-                     * (Eq. 10 applied to each coordinate) */
+                    /* Accumulate gradients (Eq. 10 applied to each coord) */
                     for (igraph_int_t d = 0; d < dim; d++) {
-                        grad_u[d] += IGRAPH_I_BCGL_LAMBDA_BC * force *
-                                     (diff[d] / dist);
+                        igraph_real_t direction = diff[d] / dist;
+                        grad_u[d] += IGRAPH_I_BCGL_LAMBDA_BC * bc_grad * direction
+                                   + length_grad * direction;
                     }
                 }
 
                 /* Compact penalty gradient (Eq. 8):
-                 *   d C_compact / d L(u) = (2 / |V|^2) * L(u)
-                 * We absorb the factor of 2 into lambda_compact. */
+                 *   d C_compact / d L(u) = (2 / |V|^2) * L(u) */
                 for (igraph_int_t d = 0; d < dim; d++) {
-                    grad_u[d] += IGRAPH_I_BCGL_LAMBDA_COMPACT *
-                                 MATRIX(*res, u, d) / vcount;
+                    grad_u[d] += 2.0 * IGRAPH_I_BCGL_LAMBDA_COMPACT *
+                                 MATRIX(*res, u, d) / (vcount * vcount);
                 }
 
                 for (igraph_int_t d = 0; d < dim; d++) {
