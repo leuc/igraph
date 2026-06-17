@@ -19,13 +19,16 @@
 #include <igraph.h>
 #include "test_utilities.h"
 
+#define LC 0.01
+#define LL 0.01
+
 static void test_exact(igraph_t *g, igraph_matrix_t *result,
                        igraph_bool_t use_seed, igraph_int_t niter,
                        igraph_real_t lr, igraph_real_t mom,
                        igraph_layout_bcgl_distribution_t dist)
 {
     IGRAPH_ASSERT(igraph_layout_bcgl(g, result, use_seed, niter, lr, mom,
-                                     dist, /*use_bh*/ 0) == IGRAPH_SUCCESS);
+                                     LC, LL, dist, /*use_bh*/ 0) == IGRAPH_SUCCESS);
 }
 
 static void test_bh(igraph_t *g, igraph_matrix_t *result,
@@ -34,7 +37,7 @@ static void test_bh(igraph_t *g, igraph_matrix_t *result,
                     igraph_layout_bcgl_distribution_t dist)
 {
     IGRAPH_ASSERT(igraph_layout_bcgl(g, result, use_seed, niter, lr, mom,
-                                     dist, /*use_bh*/ 1) == IGRAPH_SUCCESS);
+                                     LC, LL, dist, /*use_bh*/ 1) == IGRAPH_SUCCESS);
 }
 
 int main(void) {
@@ -78,6 +81,7 @@ int main(void) {
     igraph_matrix_init(&result, 0, 0);
     IGRAPH_ASSERT(igraph_layout_bcgl_3d(&g, &result, /*use_seed*/ 0,
                    /*niter*/ 100, /*lr*/ 0.01, /*mom*/ 0.9,
+                   LC, LL,
                    IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
                    /*use_bh*/ 0) == IGRAPH_SUCCESS);
     IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 10);
@@ -137,6 +141,7 @@ int main(void) {
     igraph_matrix_init(&result, 0, 0);
     IGRAPH_ASSERT(igraph_layout_bcgl_3d(&g, &result, /*use_seed*/ 0,
                    /*niter*/ 100, /*lr*/ 0.01, /*mom*/ 0.9,
+                   LC, LL,
                    IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
                    /*use_bh*/ 1) == IGRAPH_SUCCESS);
     IGRAPH_ASSERT(igraph_matrix_nrow(&result) == 10);
@@ -166,6 +171,7 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, -1, 0.01, 0.9,
+                LC, LL,
                 IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
                 /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
@@ -175,6 +181,7 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, 10, 0.0, 0.9,
+                LC, LL,
                 IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
                 /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
@@ -184,6 +191,7 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, 10, 0.01, 1.5,
+                LC, LL,
                 IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
                 /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
@@ -193,6 +201,7 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 3, 2);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 1, 10, 0.01, 0.9,
+                LC, LL,
                 IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T,
                 /*use_bh*/ 0), IGRAPH_EINVAL);
     igraph_matrix_destroy(&result);
@@ -202,6 +211,7 @@ int main(void) {
     igraph_ring(&g, 5, IGRAPH_UNDIRECTED, 0, 1);
     igraph_matrix_init(&result, 0, 0);
     CHECK_ERROR(igraph_layout_bcgl(&g, &result, 0, 10, 0.01, 0.9,
+                LC, LL,
                 IGRAPH_LAYOUT_BCGL_DISTRIBUTION_GAUSSIAN,
                 /*use_bh*/ 0), IGRAPH_UNIMPLEMENTED);
     igraph_matrix_destroy(&result);
