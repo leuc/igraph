@@ -20,6 +20,7 @@
 
 #include "igraph_interface.h"
 #include "igraph_paths.h"
+#include "igraph_step.h"
 
 #include "core/interruption.h"
 #include "layout/layout_internal.h"
@@ -239,6 +240,9 @@ igraph_error_t igraph_layout_kamada_kawai(const igraph_t *graph, igraph_matrix_t
         igraph_real_t old_x, old_y, new_x, new_y;
 
         IGRAPH_ALLOW_INTERRUPTION();
+        if (j % 10 == 0) {
+            IGRAPH_STEP(res, NULL);
+        }
 
         myD1 = 0.0, myD2 = 0.0, A = 0.0, B = 0.0, C = 0.0;
 
@@ -561,6 +565,9 @@ igraph_error_t igraph_layout_kamada_kawai_3d(const igraph_t *graph, igraph_matri
         igraph_real_t old_x, old_y, old_z, new_x, new_y, new_z;
 
         IGRAPH_ALLOW_INTERRUPTION();
+        if (j % 10 == 0) {
+            IGRAPH_STEP(res, NULL);
+        }
 
         /* Select maximal delta */
         m = 0; max_delta = -1;

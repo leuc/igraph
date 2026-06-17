@@ -42,6 +42,7 @@ using namespace std;
 #include "igraph_random.h"
 #include "igraph_interface.h"
 #include "igraph_progress.h"
+#include "igraph_step.h"
 #include "core/interruption.h"
 
 namespace drl3d {
@@ -821,8 +822,20 @@ float graph::get_tot_energy ( ) {
 
 
 igraph_error_t graph::draw_graph(igraph_matrix_t *res) {
+    igraph_int_t iter = 0;
     while (ReCompute()) {
         IGRAPH_ALLOW_INTERRUPTION();
+        if (iter % 100 == 0) {
+            size_t n = positions.size();
+            IGRAPH_CHECK(igraph_matrix_resize(res, n, 3));
+            for (size_t i = 0; i < n; i++) {
+                MATRIX(*res, i, 0) = positions[i].x;
+                MATRIX(*res, i, 1) = positions[i].y;
+                MATRIX(*res, i, 2) = positions[i].z;
+            }
+            IGRAPH_STEP(res, NULL);
+        }
+        iter++;
     }
     size_t n = positions.size();
     IGRAPH_CHECK(igraph_matrix_resize(res, n, 3));
