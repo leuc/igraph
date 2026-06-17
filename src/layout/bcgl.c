@@ -32,7 +32,7 @@
  * loss (Eq. 3) augmented with aesthetic regularization terms (Eq. 5).
  *
  * The total objective (Eq. 5) is:
- *   C = C_BC + C_A
+ *   C = lambda_BC * C_BC + C_A
  *
  * where C_BC (Eq. 6) is the binary classification loss:
  *   C_BC = sum_{(u,v) in E} -log p(u,v)
@@ -50,10 +50,12 @@
  * Optimization uses momentum-based SGD (Section 3.2.3). The gradient of
  * C_BC (Eq. 10) decomposes into attractive forces on edges and repulsive
  * forces on non-edges:
- *   d C_BC / d L(u) = sum_v [ 1/p * dp/dL(u)  -  1/(1-p) * dp/dL(u) ]
+ *   d C_BC / d L(u) = -sum_edges [1/p * dp/dL(u)]
+ *                    + sum_non-edges [1/(1-p) * dp/dL(u)]
  *
- * The first term attracts connected vertices; the second repels
- * non-connected vertices.
+ * The code computes the negated gradient (force) directly:
+ *   Edges:       force = p * dist       (attractive)
+ *   Non-edges:   force = -(1-p)/dist    (repulsive)
  *
  * The paper also describes a multilevel strategy (Section 3.2.4, (2))
  * where the graph is coarsened into G_1, G_2, ..., G_K with decreasing
@@ -100,11 +102,15 @@
  * (Section 3.2.2).
  *
  * For the Student's t-distribution (Algorithm BCGL-T):
- *   p_T(u,v) = 1 / (1 + dist^2 / b)
+ *   p_T(u,v) = 1 / (Z * (1 + dist^2 * b))
  *
  * The gradient of C_BC w.r.t. L(u) for a pair (u,v) is (Eq. 10):
- *   For edges:       (1/p) * dp/dL(u)  =  p * dist * (diff / dist)
- *   For non-edges:  -1/(1-p) * dp/dL(u) = -(1-p)/dist * (diff / dist)
+ *   For edges:      gradient = -p * dist * (diff/dist)     (attraction)
+ *   For non-edges:  gradient = +(1-p)/dist * (diff/dist)   (repulsion)
+ *
+ * The code computes the force (negated gradient) directly:
+ *   Edges:       force = p * dist
+ *   Non-edges:   force = -(1-p)/dist
  *
  * The compact term gradient (Eq. 8) is:
  *   d C_compact / d L(u) = (2 / |V|^2) * L(u)
@@ -224,28 +230,27 @@ static igraph_error_t igraph_i_layout_bcgl(
                      * (Section 3.2.2).
                      *
                      * Student's t-distribution (Algorithm BCGL-T):
-                     *   p_T(u,v) = 1 / (1 + dist^2 / b)
-                     * where b = IGRAPH_I_BCGL_T_DIST_B is the degrees
-                     * of freedom parameter. The normalization Z is
-                     * omitted because it cancels in the gradient.
+                     *   p_T(u,v) = 1 / (Z * (1 + dist^2 * b))
+                     * where b is the degrees of freedom and
+                     *   Z = sum_{i!=j} (1 + dist_ij^2 * b)^{-1}
+                     * is the normalization constant. Z cancels in the
+                     * gradient so we omit it.
                      */
-                    p_val = 1.0 / (1.0 + dist_sq / IGRAPH_I_BCGL_T_DIST_B);
+                    p_val = 1.0 / (1.0 + dist_sq * IGRAPH_I_BCGL_T_DIST_B);
 
                     igraph_are_adjacent(graph, u, v, &connected);
 
-                    /* Compute force from Eq. 10:
+                    /* Compute force (negated gradient of Eq. 10):
                      *
                      * For connected vertices (edges, Eq. 6 first term):
-                     *   The attractive force is derived from
-                     *   -(1/p) * dp/dL(u). For the t-distribution this
-                     *   simplifies to p * dist * (diff/dist).
+                     *   Gradient = -p * dist * (diff/dist), so
+                     *   force = p * dist (attractive, toward v).
                      *   We also add the length regularization gradient
                      *   (Eq. 9): lambda_length * (dist - 1) / |E|.
                      *
                      * For non-connected vertices (non-edges, Eq. 6 second term):
-                     *   The repulsive force is derived from
-                     *   1/(1-p) * dp/dL(u). This simplifies to
-                     *   -(1-p)/dist * (diff/dist).
+                     *   Gradient = +(1-p)/dist * (diff/dist), so
+                     *   force = -(1-p)/dist (repulsive, away from v).
                      */
                     if (connected) {
                         /* Attractive force from C_BC (Eq. 6) + C_length (Eq. 9) */
@@ -331,9 +336,9 @@ static igraph_error_t igraph_i_layout_bcgl(
  *
  * </para><para>
  * \c IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T uses a Student's
- * t-distribution with one degree of freedom (Algorithm BCGL-T):
- * <code>p_T(u,v) = 1 / (1 + dist^2 / b)</code>,
- * where b is the degrees of freedom parameter. The fat-tailed nature of the
+ * t-distribution with degrees of freedom b (Algorithm BCGL-T):
+ * <code>p_T(u,v) = 1 / (Z * (1 + dist^2 * b))</code>,
+ * where Z is the normalization constant. The fat-tailed nature of the
  * t-distribution helps disperse vertices that are at small distances,
  * producing more flexible layouts.
  *
