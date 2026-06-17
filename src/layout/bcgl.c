@@ -103,6 +103,64 @@
  * Set to 0 to disable (zero overhead). */
 #define IGRAPH_DEBUG_BCGL 1
 
+#if IGRAPH_DEBUG_BCGL
+static void igraph_i_bcgl_debug_print_header(void) {
+    fprintf(stderr,
+            "%-6s %-14s %-14s %-14s %-14s %-14s %-14s %-14s %-14s\n",
+            "iter", "C_BC", "C_compact", "C_length", "C_total",
+            "||grad||", "||vel||", "mean_edge", "mean_nonedge");
+}
+
+static void igraph_i_bcgl_debug_print_iter(
+    igraph_int_t iter,
+    igraph_real_t loss_bc,
+    igraph_real_t loss_compact,
+    igraph_real_t loss_length,
+    igraph_real_t sum_edge_dist,
+    igraph_int_t edge_count,
+    igraph_real_t sum_nonedge_dist,
+    igraph_int_t nonedge_count,
+    const igraph_matrix_t *gradients,
+    const igraph_matrix_t *velocity,
+    igraph_int_t vcount,
+    igraph_int_t dim,
+    igraph_int_t ecount)
+{
+    igraph_real_t grad_norm = 0.0;
+    igraph_real_t vel_norm = 0.0;
+    for (igraph_int_t i = 0; i < vcount; i++) {
+        for (igraph_int_t d = 0; d < dim; d++) {
+            igraph_real_t g = MATRIX(*gradients, i, d);
+            grad_norm += g * g;
+            igraph_real_t v = MATRIX(*velocity, i, d);
+            vel_norm += v * v;
+        }
+    }
+    grad_norm = sqrt(grad_norm);
+    vel_norm = sqrt(vel_norm);
+
+    igraph_real_t loss_length_norm = loss_length / (ecount > 0 ? ecount : 1);
+    igraph_real_t loss_compact_norm = loss_compact;
+    if (vcount > 0) {
+        loss_compact_norm /= (vcount * vcount);
+    }
+    igraph_real_t total_c = IGRAPH_I_BCGL_LAMBDA_BC * loss_bc +
+                            IGRAPH_I_BCGL_LAMBDA_COMPACT * loss_compact_norm +
+                            IGRAPH_I_BCGL_LAMBDA_LENGTH * loss_length_norm;
+
+    igraph_real_t mean_edge = 0.0;
+    igraph_real_t mean_nonedge = 0.0;
+    if (edge_count > 0) mean_edge = sum_edge_dist / edge_count;
+    if (nonedge_count > 0) mean_nonedge = sum_nonedge_dist / nonedge_count;
+
+    fprintf(stderr,
+            "%-6" IGRAPH_PRId " %-14.6e %-14.6e %-14.6e %-14.6e %-14.6e %-14.6e %-14.4f %-14.4f\n",
+            iter, loss_bc, loss_compact_norm, loss_length_norm,
+            total_c, grad_norm, vel_norm,
+            mean_edge, mean_nonedge);
+}
+#endif
+
 /**
  * \function igraph_i_layout_bcgl
  * \brief Core BCGL layout implementation (internal).
@@ -204,10 +262,7 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
         IGRAPH_MATRIX_INIT_FINALLY(&gradients, vcount, dim);
 
 #if IGRAPH_DEBUG_BCGL
-        fprintf(stderr,
-                "%-6s %-14s %-14s %-14s %-14s %-14s %-14s %-14s %-14s\n",
-                "iter", "C_BC", "C_compact", "C_length", "C_total",
-                "||grad||", "||vel||", "mean_edge", "mean_nonedge");
+        igraph_i_bcgl_debug_print_header();
 #endif
 
         IGRAPH_PROGRESS("BCGL layout", 0, NULL);
@@ -434,43 +489,13 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
             }
 
 #if IGRAPH_DEBUG_BCGL
-            {
-                igraph_real_t _dbg_grad_norm = 0.0;
-                igraph_real_t _dbg_vel_norm = 0.0;
-                igraph_real_t _dbg_total_c;
-                igraph_real_t _dbg_mean_edge = 0.0;
-                igraph_real_t _dbg_mean_nonedge = 0.0;
-                igraph_int_t _i, _d;
-
-                for (_i = 0; _i < vcount; _i++) {
-                    for (_d = 0; _d < dim; _d++) {
-                        igraph_real_t _g = MATRIX(gradients, _i, _d);
-                        _dbg_grad_norm += _g * _g;
-                        igraph_real_t _v = MATRIX(velocity, _i, _d);
-                        _dbg_vel_norm += _v * _v;
-                    }
-                }
-                _dbg_grad_norm = sqrt(_dbg_grad_norm);
-                _dbg_vel_norm = sqrt(_dbg_vel_norm);
-
-                _dbg_loss_length /= (ecount > 0 ? ecount : 1);
-                if (vcount > 0)
-                    _dbg_loss_compact /= (vcount * vcount);
-                _dbg_total_c = IGRAPH_I_BCGL_LAMBDA_BC * _dbg_loss_bc +
-                               IGRAPH_I_BCGL_LAMBDA_COMPACT * _dbg_loss_compact +
-                               IGRAPH_I_BCGL_LAMBDA_LENGTH * _dbg_loss_length;
-
-                if (_dbg_edge_count > 0)
-                    _dbg_mean_edge = _dbg_sum_edge_dist / _dbg_edge_count;
-                if (_dbg_nonedge_count > 0)
-                    _dbg_mean_nonedge = _dbg_sum_nonedge_dist / _dbg_nonedge_count;
-
-                fprintf(stderr,
-                        "%-6" IGRAPH_PRId " %-14.6e %-14.6e %-14.6e %-14.6e %-14.6e %-14.6e %-14.4f %-14.4f\n",
-                        iter, _dbg_loss_bc, _dbg_loss_compact, _dbg_loss_length,
-                        _dbg_total_c, _dbg_grad_norm, _dbg_vel_norm,
-                        _dbg_mean_edge, _dbg_mean_nonedge);
-            }
+            igraph_i_bcgl_debug_print_iter(
+                iter,
+                _dbg_loss_bc, _dbg_loss_compact, _dbg_loss_length,
+                _dbg_sum_edge_dist, _dbg_edge_count,
+                _dbg_sum_nonedge_dist, _dbg_nonedge_count,
+                &gradients, &velocity,
+                vcount, dim, ecount);
 #endif
 
             /* Apply momentum-based SGD update (Section 3.2.3):
@@ -478,7 +503,7 @@ static igraph_error_t igraph_i_layout_bcgl_exact(
              *   L(t) = L(t-1) + velocity(t)
              */
 #ifdef _OPENMP
-#  pragma omp parallel for schedule(static) if(vcount > 1000)
+#  pragma omp parallel for schedule(static)
 #endif
             for (igraph_int_t u = 0; u < vcount; u++) {
                 for (igraph_int_t d = 0; d < dim; d++) {
@@ -619,23 +644,37 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
     ud.b = IGRAPH_I_BCGL_T_DIST_B;
     ud.lambda_bc = IGRAPH_I_BCGL_LAMBDA_BC;
 
+#if IGRAPH_DEBUG_BCGL
+    igraph_i_bcgl_debug_print_header();
+#endif
     IGRAPH_PROGRESS("BCGL layout", 0, NULL);
     for (igraph_int_t iter = 0; iter < niter; iter++) {
         IGRAPH_ALLOW_INTERRUPTION();
         IGRAPH_PROGRESS("BCGL layout", 100.0 * iter / niter, NULL);
         IGRAPH_STEP(res, NULL);
 
+#if IGRAPH_DEBUG_BCGL
+        igraph_real_t _dbg_loss_bc = 0.0;
+        igraph_real_t _dbg_loss_compact = 0.0;
+        igraph_real_t _dbg_loss_length = 0.0;
+        igraph_real_t _dbg_sum_edge_dist = 0.0;
+        igraph_real_t _dbg_sum_nonedge_dist = 0.0;
+        igraph_int_t _dbg_edge_count = 0;
+        igraph_int_t _dbg_nonedge_count = 0;
+#endif
+
         igraph_matrix_null(&gradients);
         igraph_matrix_null(&z_forces);
         igraph_matrix_null(&dZ_forces);
 
-        /* Rebuild BH tree from current positions */
         igraph_bh_tree_build(&tree, res, NULL);
 
-        /* 1. Compute normalization constant Z via BH */
         igraph_bh_apply_repulsion_from_tree(&tree, &z_forces, bcgl_z_kernel, &ud.b);
         {
             igraph_real_t Z_sum = 0.0;
+#ifdef _OPENMP
+#  pragma omp parallel for reduction(+: Z_sum)
+#endif
             for (igraph_int_t i = 0; i < vcount; i++) {
                 Z_sum += MATRIX(z_forces, i, 0);
             }
@@ -643,21 +682,21 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
             ud.inv_Z = 1.0 / ud.Z;
         }
 
-        /* 2. Compute dZ_u for all u via BH */
         igraph_bh_apply_repulsion_from_tree(&tree, &dZ_forces, bcgl_dZ_kernel, &ud.b);
         ud.dZ_x = VECTOR(dZ_x);
         ud.dZ_y = VECTOR(dZ_y);
         ud.dZ_z = VECTOR(dZ_z);
+#ifdef _OPENMP
+#  pragma omp parallel for
+#endif
         for (igraph_int_t i = 0; i < vcount; i++) {
             VECTOR(dZ_x)[i] = MATRIX(dZ_forces, i, 0);
             VECTOR(dZ_y)[i] = MATRIX(dZ_forces, i, 1);
             VECTOR(dZ_z)[i] = (dim == 3) ? MATRIX(dZ_forces, i, 2) : 0.0;
         }
 
-        /* 3. Compute non-edge (all-pairs repulsive) forces via BH */
         igraph_bh_apply_repulsion_from_tree(&tree, &gradients, bcgl_nonedge_kernel, &ud);
 
-        /* 4. Edge correction: subtract BH non-edge, add correct edge force + length penalty */
         for (igraph_int_t e = 0; e < ecount; e++) {
             igraph_int_t u = VECTOR(edgelist)[2 * e];
             igraph_int_t v = VECTOR(edgelist)[2 * e + 1];
@@ -677,10 +716,8 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
             igraph_real_t dq_over_Z = dq_coeff * ud.inv_Z;
             igraph_real_t q_over_Z2 = q * ud.inv_Z * ud.inv_Z;
 
-            /* correction coefficient: (-1/p) - (1/(1-p)) = (2p-1) / (p*(1-p)) */
             igraph_real_t corr_coeff = (2.0 * p - 1.0) / (p * (1.0 - p));
 
-            /* length penalty scalar */
             igraph_real_t len_scalar = 2.0 * IGRAPH_I_BCGL_LAMBDA_LENGTH *
                                        (dist - 1.0) / (ecount > 0 ? ecount : 1);
 
@@ -695,17 +732,46 @@ static igraph_error_t igraph_i_layout_bcgl_bh(
                 MATRIX(gradients, u, d) += ud.lambda_bc * corr_coeff * grad_p_u + len_scalar * dir;
                 MATRIX(gradients, v, d) += ud.lambda_bc * corr_coeff * grad_p_v - len_scalar * dir;
             }
+
+#if IGRAPH_DEBUG_BCGL
+            _dbg_loss_bc += -log(p);
+            _dbg_loss_length += (dist - 1.0) * (dist - 1.0);
+            _dbg_sum_edge_dist += dist;
+            _dbg_edge_count++;
+#endif
         }
 
-        /* 5. Compact penalty (Eq. 8) */
+#ifdef _OPENMP
+#  pragma omp parallel for
+#endif
         for (igraph_int_t u = 0; u < vcount; u++) {
             for (igraph_int_t d = 0; d < dim; d++) {
-                MATRIX(gradients, u, d) += 2.0 * IGRAPH_I_BCGL_LAMBDA_COMPACT *
-                                            MATRIX(*res, u, d) / (vcount * vcount);
+                igraph_real_t val = 2.0 * IGRAPH_I_BCGL_LAMBDA_COMPACT *
+                                     MATRIX(*res, u, d) / (vcount * vcount);
+                MATRIX(gradients, u, d) += val;
+#if IGRAPH_DEBUG_BCGL
+                /* atomic needed since multiple threads write to _dbg_loss_compact */
+#ifdef _OPENMP
+#  pragma omp atomic
+#endif
+                _dbg_loss_compact += MATRIX(*res, u, d) * MATRIX(*res, u, d);
+#endif
             }
         }
 
-        /* 6. Momentum-based SGD update */
+#if IGRAPH_DEBUG_BCGL
+        igraph_i_bcgl_debug_print_iter(
+            iter,
+            _dbg_loss_bc, _dbg_loss_compact, _dbg_loss_length,
+            _dbg_sum_edge_dist, _dbg_edge_count,
+            _dbg_sum_nonedge_dist, _dbg_nonedge_count,
+            &gradients, &velocity,
+            vcount, dim, ecount);
+#endif
+
+#ifdef _OPENMP
+#  pragma omp parallel for schedule(static)
+#endif
         for (igraph_int_t u = 0; u < vcount; u++) {
             for (igraph_int_t d = 0; d < dim; d++) {
                 MATRIX(velocity, u, d) = momentum * MATRIX(velocity, u, d) -
