@@ -152,6 +152,21 @@ IGRAPH_EXPERIMENTAL IGRAPH_EXPORT igraph_error_t igraph_layout_umap_compute_weig
                                                 const igraph_vector_t *distances,
                                                 igraph_vector_t *weights);
 
+IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl(const igraph_t *graph,
+                                     igraph_matrix_t *res,
+                                     igraph_bool_t use_seed,
+                                     igraph_int_t niter,
+                                     igraph_real_t learning_rate,
+                                     igraph_real_t momentum,
+                                     igraph_layout_bcgl_distribution_t distribution);
+
+IGRAPH_EXPORT igraph_error_t igraph_layout_bcgl_3d(const igraph_t *graph,
+                                      igraph_matrix_t *res,
+                                      igraph_bool_t use_seed,
+                                      igraph_int_t niter,
+                                      igraph_real_t learning_rate,
+                                      igraph_real_t momentum,
+                                      igraph_layout_bcgl_distribution_t distribution);
 
 /**
  * \struct igraph_layout_drl_options_t

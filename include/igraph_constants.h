@@ -222,6 +222,10 @@ typedef enum { IGRAPH_SUBGRAPH_AUTO = 0,
                IGRAPH_SUBGRAPH_CREATE_FROM_SCRATCH
              } igraph_subgraph_implementation_t;
 
+typedef enum { IGRAPH_LAYOUT_BCGL_DISTRIBUTION_STUDENT_T = 0,
+               IGRAPH_LAYOUT_BCGL_DISTRIBUTION_GAUSSIAN
+             } igraph_layout_bcgl_distribution_t;
+
 typedef enum { IGRAPH_LAYOUT_GRID = 0,
                IGRAPH_LAYOUT_NOGRID,
                IGRAPH_LAYOUT_AUTOGRID
