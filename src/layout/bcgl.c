@@ -80,6 +80,9 @@
 
 #include "core/interruption.h"
 
+#include "igraph_progress.h"
+#include "igraph_step.h"
+
 #include <math.h>
 
 /* Hyperparameters from the BCGL paper (Section 3.2.1, Eq. 5, 7).
@@ -205,8 +208,12 @@ static igraph_error_t igraph_i_layout_bcgl(
                 "||grad||", "||vel||", "mean_edge", "mean_nonedge");
 #endif
 
+        IGRAPH_PROGRESS("BCGL layout", 0, NULL);
         for (igraph_int_t iter = 0; iter < niter; iter++) {
             IGRAPH_ALLOW_INTERRUPTION();
+
+            IGRAPH_PROGRESS("BCGL layout", 100.0 * iter / niter, NULL);
+            IGRAPH_STEP(res, NULL);
 
 #if IGRAPH_DEBUG_BCGL
             igraph_real_t _dbg_loss_bc = 0.0;
@@ -479,6 +486,8 @@ static igraph_error_t igraph_i_layout_bcgl(
                 }
             }
         }
+
+        IGRAPH_PROGRESS("BCGL layout", 100, NULL);
 
         igraph_matrix_destroy(&gradients);
         igraph_matrix_destroy(&velocity);
