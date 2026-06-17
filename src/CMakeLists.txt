@@ -425,6 +425,10 @@ if(PLFIT_LIBRARIES)
   target_link_libraries(igraph PRIVATE ${PLFIT_LIBRARIES})
 endif()
 
+if(IGRAPH_OPENMP_SUPPORT)
+  target_link_libraries(igraph PRIVATE OpenMP::OpenMP_C)
+endif()
+
 # Link igraph statically to some of the libraries from the subdirectories
 target_link_libraries(
   igraph

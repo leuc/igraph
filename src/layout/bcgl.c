@@ -229,6 +229,9 @@ static igraph_error_t igraph_i_layout_bcgl(
              * Since q(i,j) = q(j,i), we sum over i < j and double.
              * ========================================================== */
             igraph_real_t Z = 0.0;
+#ifdef _OPENMP
+#  pragma omp parallel for schedule(guided) reduction(+: Z)
+#endif
             for (igraph_int_t i = 0; i < vcount; i++) {
                 for (igraph_int_t j = i + 1; j < vcount; j++) {
                     igraph_real_t diff[3];
@@ -241,7 +244,11 @@ static igraph_error_t igraph_i_layout_bcgl(
 
                     if (sqrt(dist_sq) < 1e-5) {
                         for (igraph_int_t d = 0; d < dim; d++) {
+#ifdef _OPENMP
+                            diff[d] = 1e-4 * (igraph_real_t) ((i + j + d) % 100) / 100.0;
+#else
                             diff[d] = RNG_UNIF(0, 1e-4);
+#endif
                         }
                         dist_sq = 0;
                         for (igraph_int_t d = 0; d < dim; d++) {
@@ -266,6 +273,16 @@ static igraph_error_t igraph_i_layout_bcgl(
              * Edge loss:   d/dL [-log p] = -(1/p) * dp/dL(u)
              * Non-edge:    d/dL [-log(1-p)] = (1/(1-p)) * dp/dL(u)
              * ========================================================== */
+#ifdef _OPENMP
+#  if IGRAPH_DEBUG_BCGL
+#    pragma omp parallel for schedule(guided) \
+        reduction(+: _dbg_loss_bc, _dbg_loss_compact, _dbg_loss_length, \
+                  _dbg_sum_edge_dist, _dbg_sum_nonedge_dist, \
+                  _dbg_edge_count, _dbg_nonedge_count)
+#  else
+#    pragma omp parallel for schedule(guided)
+#  endif
+#endif
             for (igraph_int_t u = 0; u < vcount; u++) {
                 igraph_real_t grad_u[3] = {0, 0, 0};
 
@@ -284,7 +301,11 @@ static igraph_error_t igraph_i_layout_bcgl(
 
                     if (sqrt(dist_sq) < 1e-5) {
                         for (igraph_int_t d = 0; d < dim; d++) {
+#ifdef _OPENMP
+                            diff[d] = 1e-4 * (igraph_real_t) ((u + v + d) % 100) / 100.0;
+#else
                             diff[d] = RNG_UNIF(0, 1e-4);
+#endif
                         }
                         dist_sq = 0;
                         for (igraph_int_t d = 0; d < dim; d++) {
@@ -320,7 +341,11 @@ static igraph_error_t igraph_i_layout_bcgl(
 
                     if (dist < 1e-5) {
                         for (igraph_int_t d = 0; d < dim; d++) {
+#ifdef _OPENMP
+                            diff[d] = 1e-4 * (igraph_real_t) ((u + v + d) % 100) / 100.0;
+#else
                             diff[d] = RNG_UNIF(0, 1e-4);
+#endif
                         }
                         dist_sq = 0;
                         for (igraph_int_t d = 0; d < dim; d++) {
@@ -443,6 +468,9 @@ static igraph_error_t igraph_i_layout_bcgl(
              *   velocity(t) = momentum * velocity(t-1) - lr * gradient(t)
              *   L(t) = L(t-1) + velocity(t)
              */
+#ifdef _OPENMP
+#  pragma omp parallel for schedule(static) if(vcount > 1000)
+#endif
             for (igraph_int_t u = 0; u < vcount; u++) {
                 for (igraph_int_t d = 0; d < dim; d++) {
                     MATRIX(velocity, u, d) = momentum * MATRIX(velocity, u, d) -
