@@ -214,6 +214,7 @@ add_library(
 
   layout/align.c
   layout/bhtsne.c
+  layout/bcgl.c
   layout/circular.c
   layout/davidson_harel.c
   layout/drl/DensityGrid.cpp
