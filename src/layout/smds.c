@@ -1,7 +1,14 @@
 /*
-   Spherical MDS layout for igraph.
-   Based on stochastic gradient descent optimization.
-*/
+ * Spherical MDS layout for igraph.
+ * Based on stochastic gradient descent optimization.
+ *
+ * Internal coordinates: colatitude theta in [0, pi], azimuth phi in [0, 2*pi].
+ * Output: Cartesian (x, y, z) on the unit sphere.
+ *
+ * Paper reference: Spherical Multi-Dimensional Scaling (SMDS)
+ * using the spherical law of cosines for colatitude:
+ *   cos(delta) = cos(theta_1)*cos(theta_2) + sin(theta_1)*sin(theta_2)*cos(phi_1 - phi_2)
+ */
 
 #include "igraph_layout.h"
 
@@ -17,34 +24,51 @@
 
 #include <math.h>
 
-/* Helper function to compute the spherical geodesic distance between two points */
-static igraph_real_t igraph_i_smds_geodesic(igraph_real_t y, igraph_real_t x,
-                                            igraph_real_t b, igraph_real_t a) {
-    igraph_real_t val = sin(y)*sin(b) + cos(y)*cos(b)*cos(a-x);
-    /* Clamp to [-1, 1] to avoid NaNs in acos due to floating point inaccuracies */
+/*
+ * Spherical law of cosines for colatitude (theta) and azimuth (phi):
+ *   cos(delta) = cos(theta_i)*cos(theta_j) + sin(theta_i)*sin(theta_j)*cos(phi_i - phi_j)
+ *
+ * Parameters: (theta_i, phi_i, theta_j, phi_j)
+ */
+static igraph_real_t igraph_i_smds_geodesic(igraph_real_t theta_i, igraph_real_t phi_i,
+                                            igraph_real_t theta_j, igraph_real_t phi_j) {
+    igraph_real_t val = cos(theta_i)*cos(theta_j) + sin(theta_i)*sin(theta_j)*cos(phi_i - phi_j);
     if (val > 1.0) val = 1.0;
     if (val < -1.0) val = -1.0;
     return acos(val);
 }
 
-/* Helper function to compute the gradient of the spherical distance */
-static void igraph_i_smds_gradient(igraph_real_t y, igraph_real_t x,
-                                   igraph_real_t b, igraph_real_t a,
+/*
+ * Partial derivatives of geodesic distance w.r.t. colatitude/azimuth.
+ *
+ * For colatitude theta and azimuth phi:
+ *   v = cos(t_i)*cos(t_j) + sin(t_i)*sin(t_j)*cos(p_i - p_j)
+ *   denom = sqrt(1 - v^2)
+ *
+ *   d(delta)/d(theta_i) = [sin(t_i)*cos(t_j) - cos(t_i)*sin(t_j)*cos(dp)] / denom
+ *   d(delta)/d(phi_i)   = [sin(t_i)*sin(t_j)*sin(dp)] / denom
+ *   d(delta)/d(theta_j) = [cos(t_i)*sin(t_j) - sin(t_i)*cos(t_j)*cos(dp)] / denom
+ *   d(delta)/d(phi_j)   = -d(delta)/d(phi_i)
+ *
+ * grad layout: grad[row, col] where row 0 = vertex i, row 1 = vertex j;
+ *              col 0 = theta derivative, col 1 = phi derivative.
+ */
+static void igraph_i_smds_gradient(igraph_real_t theta_i, igraph_real_t phi_i,
+                                   igraph_real_t theta_j, igraph_real_t phi_j,
                                    igraph_matrix_t *grad) {
-    igraph_real_t val = sin(b)*sin(y) + cos(b)*cos(y)*cos(a-x);
+    igraph_real_t dp = phi_i - phi_j;
+    igraph_real_t val = cos(theta_i)*cos(theta_j) + sin(theta_i)*sin(theta_j)*cos(dp);
     igraph_real_t denom = sqrt(1.0 - val*val);
 
-    /* Guard against division by zero if points are identical or antipodal */
     if (denom < 1e-8) {
         igraph_matrix_null(grad);
         return;
     }
 
-    MATRIX(*grad, 0, 1) = -(sin(a-x)*cos(b)*cos(y)) / denom;
-    MATRIX(*grad, 0, 0) = (-sin(b)*cos(y) + sin(y)*cos(b)*cos(a-x)) / denom;
-
+    MATRIX(*grad, 0, 0) = (sin(theta_i)*cos(theta_j) - cos(theta_i)*sin(theta_j)*cos(dp)) / denom;
+    MATRIX(*grad, 0, 1) = (sin(theta_i)*sin(theta_j)*sin(dp)) / denom;
+    MATRIX(*grad, 1, 0) = (cos(theta_i)*sin(theta_j) - sin(theta_i)*cos(theta_j)*cos(dp)) / denom;
     MATRIX(*grad, 1, 1) = -MATRIX(*grad, 0, 1);
-    MATRIX(*grad, 1, 0) = (sin(b)*cos(y)*cos(a-x) - sin(y)*cos(b)) / denom;
 }
 
 /* Calculates a convergent schedule array of learning rates
@@ -100,9 +124,15 @@ static igraph_error_t igraph_i_smds_schedule(const igraph_matrix_t *d,
  * \function igraph_layout_mds_spherical
  * \brief Place the vertices on a sphere using multidimensional scaling.
  *
+ * Uses stochastic gradient descent to optimize vertex positions on a sphere
+ * so that geodesic (great-circle) distances approximate the given shortest-path
+ * distances. The result is a 3-column matrix containing Cartesian (x, y, z)
+ * coordinates on the unit sphere.
+ *
  * \param graph A graph object.
  * \param res Pointer to an initialized matrix object. This will contain the
- * result (angles theta and phi). It will be resized if needed.
+ * result as an n-by-3 matrix of Cartesian coordinates on the unit sphere.
+ * It will be resized if needed.
  * \param dist The distance matrix. If null, shortest paths will be used.
  * \param num_iter Number of iterations for the stochastic gradient descent.
  * \param lr_cap The cap for the learning rate step.
@@ -121,7 +151,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
     igraph_int_t i, j;
 
     if (no_of_nodes <= 1) {
-        IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 2));
+        IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
         igraph_matrix_null(res);
         return IGRAPH_SUCCESS;
     }
@@ -206,17 +236,19 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             if (wc > lr_cap) wc = lr_cap;
 
             igraph_real_t target_d = MATRIX(d, u, v);
-            igraph_real_t y = MATRIX(*res, u, 0);
-            igraph_real_t x = MATRIX(*res, u, 1);
-            igraph_real_t b = MATRIX(*res, v, 0);
-            igraph_real_t a = MATRIX(*res, v, 1);
+            igraph_real_t theta_i = MATRIX(*res, u, 0);
+            igraph_real_t phi_i   = MATRIX(*res, u, 1);
+            igraph_real_t theta_j = MATRIX(*res, v, 0);
+            igraph_real_t phi_j   = MATRIX(*res, v, 1);
 
-            igraph_real_t delta = igraph_i_smds_geodesic(y, x, b, a);
+            igraph_real_t delta = igraph_i_smds_geodesic(theta_i, phi_i, theta_j, phi_j);
 
-            igraph_i_smds_gradient(y, x, b, a, &grad);
+            igraph_i_smds_gradient(theta_i, phi_i, theta_j, phi_j, &grad);
 
-            /* g = gradient * 2 * (delta - target_d) */
-            igraph_real_t factor = 2.0 * (delta - target_d);
+            /* g = 2 * w_ij * (delta - d_ij) * d(delta)/d(X)
+             * w_ij = d_ij^{-2} normalizes contributions across distance scales */
+            igraph_real_t w_ij = 1.0 / (target_d * target_d);
+            igraph_real_t factor = 2.0 * w_ij * (delta - target_d);
 
             MATRIX(*res, u, 0) -= wc * MATRIX(grad, 0, 0) * factor;
             MATRIX(*res, u, 1) -= wc * MATRIX(grad, 0, 1) * factor;
@@ -225,6 +257,16 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         }
     }
     IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
+
+    /* 6. Convert angular (theta, phi) to Cartesian (x, y, z) on unit sphere */
+    IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
+    for (i = no_of_nodes - 1; i >= 0; i--) {
+        igraph_real_t theta = MATRIX(*res, i, 0);
+        igraph_real_t phi   = MATRIX(*res, i, 1);
+        MATRIX(*res, i, 0) = sin(theta) * cos(phi);
+        MATRIX(*res, i, 1) = sin(theta) * sin(phi);
+        MATRIX(*res, i, 2) = cos(theta);
+    }
 
     igraph_matrix_destroy(&grad);
     igraph_vector_destroy(&etas);
