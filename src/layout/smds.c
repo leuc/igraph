@@ -8,8 +8,11 @@
 #include "igraph_components.h"
 #include "igraph_interface.h"
 #include "igraph_paths.h"
+#include "igraph_progress.h"
 #include "igraph_random.h"
+#include "igraph_step.h"
 
+#include "core/interruption.h"
 #include "core/math.h" /* M_PI */
 
 #include <math.h>
@@ -170,8 +173,16 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
     IGRAPH_MATRIX_INIT_FINALLY(&grad, 2, 2);
 
     /* 5. SGD Optimization Loop */
+    IGRAPH_PROGRESS("Spherical MDS layout", 0, NULL);
     for (igraph_int_t step_idx = 0; step_idx < num_iter; step_idx++) {
         igraph_real_t step = VECTOR(etas)[step_idx];
+
+        /* Report progress periodically, allow readback every iteration */
+        if (step_idx % 10 == 0) {
+            IGRAPH_PROGRESS("Spherical MDS layout",
+                            100.0 * step_idx / num_iter, NULL);
+        }
+        IGRAPH_STEP(res, NULL);
 
         /* Shuffle indices for stochasticity */
         for (i = num_pairs - 1; i > 0; i--) {
@@ -186,6 +197,8 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         }
 
         for (k = 0; k < num_pairs; k++) {
+            IGRAPH_ALLOW_INTERRUPTION();
+
             igraph_int_t u = VECTOR(indices)[k * 2];
             igraph_int_t v = VECTOR(indices)[k * 2 + 1];
 
@@ -211,6 +224,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             MATRIX(*res, v, 1) -= wc * MATRIX(grad, 1, 1) * factor;
         }
     }
+    IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
 
     igraph_matrix_destroy(&grad);
     igraph_vector_destroy(&etas);
