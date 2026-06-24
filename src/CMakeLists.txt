@@ -234,6 +234,7 @@ add_library(
   layout/layout_grid.c
   layout/layout_random.c
   layout/mds.c
+  layout/smds.c
   layout/merge_dla.c
   layout/merge_grid.c
   layout/reingold_tilford.c
