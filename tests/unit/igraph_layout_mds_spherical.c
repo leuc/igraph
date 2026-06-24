@@ -68,11 +68,23 @@ int main(void) {
             MATRIX(dist_mat, j, i) = sqrt(dist_sq);
         }
     igraph_layout_mds_spherical(&g, &coords, &dist_mat, 200, 0.5);
-    /* Verify output dimensions */
-    if (igraph_matrix_nrow(&coords) != 8 || igraph_matrix_ncol(&coords) != 2) {
-        printf("Expected 8x2 matrix, got %" IGRAPH_PRId "x%" IGRAPH_PRId "\n",
+    /* Verify output dimensions: 3D sphere */
+    if (igraph_matrix_nrow(&coords) != 8 || igraph_matrix_ncol(&coords) != 3) {
+        printf("Expected 8x3 matrix, got %" IGRAPH_PRId "x%" IGRAPH_PRId "\n",
                igraph_matrix_nrow(&coords), igraph_matrix_ncol(&coords));
         return 1;
+    }
+    /* Verify all points lie on the unit sphere */
+    for (i = 0; i < 8; i++) {
+        double norm = 0.0;
+        for (j = 0; j < 3; j++) {
+            norm += MATRIX(coords, i, j) * MATRIX(coords, i, j);
+        }
+        if (fabs(sqrt(norm) - 1.0) > 1e-6) {
+            printf("Vertex %" IGRAPH_PRId " not on unit sphere: norm = %g\n",
+                   i, sqrt(norm));
+            return 1;
+        }
     }
     igraph_matrix_destroy(&dist_mat);
     igraph_matrix_destroy(&coords);
