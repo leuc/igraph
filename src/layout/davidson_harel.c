@@ -23,6 +23,7 @@
 
 #include "igraph_interface.h"
 #include "igraph_random.h"
+#include "igraph_step.h"
 
 #include "core/interruption.h"
 #include "core/math.h" /* M_PI */
@@ -238,6 +239,9 @@ igraph_error_t igraph_layout_davidson_harel(const igraph_t *graph, igraph_matrix
 
     for (igraph_int_t round = 0; round < maxiter + fineiter; round++) {
         IGRAPH_ALLOW_INTERRUPTION();
+        if (round % 10 == 0) {
+            IGRAPH_STEP(res, NULL);
+        }
 
         igraph_vector_int_shuffle(&perm);
 

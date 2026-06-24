@@ -63,8 +63,9 @@ add_library(
   core/setup.c
   core/sparsemat.c
   core/stack.c
-  core/statusbar.c
-  core/strvector.c
+   core/statusbar.c
+   core/step.c
+   core/strvector.c
   core/trie.c
   core/vector.c
   core/vector_list.c
