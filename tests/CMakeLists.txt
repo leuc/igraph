@@ -429,6 +429,7 @@ add_legacy_tests(
   igraph_layout_kamada_kawai
   igraph_layout_lgl
   igraph_layout_mds
+  igraph_layout_mds_spherical
   igraph_layout_merge2
   igraph_layout_merge3
   igraph_layout_random_3d
