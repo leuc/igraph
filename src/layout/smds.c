@@ -24,53 +24,6 @@
 
 #include <math.h>
 
-/*
- * Spherical law of cosines for colatitude (theta) and azimuth (phi):
- *   cos(delta) = cos(theta_i)*cos(theta_j) + sin(theta_i)*sin(theta_j)*cos(phi_i - phi_j)
- *
- * Parameters: (theta_i, phi_i, theta_j, phi_j)
- */
-static igraph_real_t igraph_i_smds_geodesic(igraph_real_t theta_i, igraph_real_t phi_i,
-                                            igraph_real_t theta_j, igraph_real_t phi_j) {
-    igraph_real_t val = cos(theta_i)*cos(theta_j) + sin(theta_i)*sin(theta_j)*cos(phi_i - phi_j);
-    if (val > 1.0) val = 1.0;
-    if (val < -1.0) val = -1.0;
-    return acos(val);
-}
-
-/*
- * Partial derivatives of geodesic distance w.r.t. colatitude/azimuth.
- *
- * For colatitude theta and azimuth phi:
- *   v = cos(t_i)*cos(t_j) + sin(t_i)*sin(t_j)*cos(p_i - p_j)
- *   denom = sqrt(1 - v^2)
- *
- *   d(delta)/d(theta_i) = [sin(t_i)*cos(t_j) - cos(t_i)*sin(t_j)*cos(dp)] / denom
- *   d(delta)/d(phi_i)   = [sin(t_i)*sin(t_j)*sin(dp)] / denom
- *   d(delta)/d(theta_j) = [cos(t_i)*sin(t_j) - sin(t_i)*cos(t_j)*cos(dp)] / denom
- *   d(delta)/d(phi_j)   = -d(delta)/d(phi_i)
- *
- * grad layout: grad[row, col] where row 0 = vertex i, row 1 = vertex j;
- *              col 0 = theta derivative, col 1 = phi derivative.
- */
-static void igraph_i_smds_gradient(igraph_real_t theta_i, igraph_real_t phi_i,
-                                   igraph_real_t theta_j, igraph_real_t phi_j,
-                                   igraph_matrix_t *grad) {
-    igraph_real_t dp = phi_i - phi_j;
-    igraph_real_t val = cos(theta_i)*cos(theta_j) + sin(theta_i)*sin(theta_j)*cos(dp);
-    igraph_real_t denom = sqrt(1.0 - val*val);
-
-    if (denom < 1e-8) {
-        igraph_matrix_null(grad);
-        return;
-    }
-
-    MATRIX(*grad, 0, 0) = (sin(theta_i)*cos(theta_j) - cos(theta_i)*sin(theta_j)*cos(dp)) / denom;
-    MATRIX(*grad, 0, 1) = (sin(theta_i)*sin(theta_j)*sin(dp)) / denom;
-    MATRIX(*grad, 1, 0) = (cos(theta_i)*sin(theta_j) - sin(theta_i)*cos(theta_j)*cos(dp)) / denom;
-    MATRIX(*grad, 1, 1) = -MATRIX(*grad, 0, 1);
-}
-
 /* Calculates a convergent schedule array of learning rates
  * mirroring the Python `schedule_convergent` implementation.
  */
@@ -147,7 +100,6 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
     igraph_matrix_t angles;
     igraph_vector_t etas;
     igraph_vector_int_t indices;
-    igraph_matrix_t grad;
     igraph_real_t max_dist = 0.0;
     igraph_int_t i, j;
 
@@ -211,7 +163,13 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
     IGRAPH_VECTOR_INIT_FINALLY(&etas, 0);
     IGRAPH_CHECK(igraph_i_smds_schedule(&d, &etas, 30, 0.01, num_iter));
 
-    IGRAPH_MATRIX_INIT_FINALLY(&grad, 2, 2);
+    /* Precomputed trig lookup tables — avoids 10 trig calls per pair in
+     * the inner loop. sin/cos are O(n) per iteration vs O(n²) pairs. */
+    igraph_vector_t sin_theta, cos_theta, sin_phi, cos_phi;
+    IGRAPH_VECTOR_INIT_FINALLY(&sin_theta, no_of_nodes);
+    IGRAPH_VECTOR_INIT_FINALLY(&cos_theta, no_of_nodes);
+    IGRAPH_VECTOR_INIT_FINALLY(&sin_phi, no_of_nodes);
+    IGRAPH_VECTOR_INIT_FINALLY(&cos_phi, no_of_nodes);
 
     /* 5. SGD Optimization Loop */
     IGRAPH_PROGRESS("Spherical MDS layout", 0, NULL);
@@ -220,6 +178,14 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
         IGRAPH_PROGRESS("Spherical MDS layout",
                         100.0 * step_idx / num_iter, NULL);
+
+        /* Precompute sin/cos for all vertices — O(n), amortized over O(n²) pairs */
+        for (i = 0; i < no_of_nodes; i++) {
+            VECTOR(sin_theta)[i] = sin(MATRIX(angles, i, 0));
+            VECTOR(cos_theta)[i] = cos(MATRIX(angles, i, 0));
+            VECTOR(sin_phi)[i]   = sin(MATRIX(angles, i, 1));
+            VECTOR(cos_phi)[i]   = cos(MATRIX(angles, i, 1));
+        }
 
         /* Shuffle indices for stochasticity */
         for (i = num_pairs - 1; i > 0; i--) {
@@ -243,44 +209,72 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             if (wc > lr_cap) wc = lr_cap;
 
             igraph_real_t target_d = MATRIX(d, u, v);
-            igraph_real_t theta_i = MATRIX(angles, u, 0);
-            igraph_real_t phi_i   = MATRIX(angles, u, 1);
-            igraph_real_t theta_j = MATRIX(angles, v, 0);
-            igraph_real_t phi_j   = MATRIX(angles, v, 1);
 
-            igraph_real_t delta = igraph_i_smds_geodesic(theta_i, phi_i, theta_j, phi_j);
+            /* Lookup precomputed trig values */
+            igraph_real_t st_u = VECTOR(sin_theta)[u];
+            igraph_real_t ct_u = VECTOR(cos_theta)[u];
+            igraph_real_t sp_u = VECTOR(sin_phi)[u];
+            igraph_real_t cp_u = VECTOR(cos_phi)[u];
+            igraph_real_t st_v = VECTOR(sin_theta)[v];
+            igraph_real_t ct_v = VECTOR(cos_theta)[v];
+            igraph_real_t sp_v = VECTOR(sin_phi)[v];
+            igraph_real_t cp_v = VECTOR(cos_phi)[v];
 
-            igraph_i_smds_gradient(theta_i, phi_i, theta_j, phi_j, &grad);
+            /* cos(delta) = cos(t_i)*cos(t_j) + sin(t_i)*sin(t_j)*cos(phi_i - phi_j)
+             *            = ct_u*ct_v + st_u*st_v*(cp_u*cp_v + sp_u*sp_v) */
+            igraph_real_t cos_dp = cp_u * cp_v + sp_u * sp_v;
+            igraph_real_t val = ct_u * ct_v + st_u * st_v * cos_dp;
+            if (val > 1.0) val = 1.0;
+            if (val < -1.0) val = -1.0;
 
-            /* g = 2 * (delta - d_ij) * d(delta)/d(X)
-             * Note: w_ij = d_ij^{-2} is accounted for in the learning rate
-             * schedule, not in the gradient itself (matches reference impl). */
+            igraph_real_t delta = acos(val);
             igraph_real_t factor = 2.0 * (delta - target_d);
 
-            MATRIX(angles, u, 0) -= wc * MATRIX(grad, 0, 0) * factor;
-            MATRIX(angles, u, 1) -= wc * MATRIX(grad, 0, 1) * factor;
-            MATRIX(angles, v, 0) -= wc * MATRIX(grad, 1, 0) * factor;
-            MATRIX(angles, v, 1) -= wc * MATRIX(grad, 1, 1) * factor;
+            /* Gradient via precomputed values — no trig calls */
+            igraph_real_t denom = sqrt(1.0 - val * val);
+            if (denom < 1e-8) {
+                continue;
+            }
+
+            igraph_real_t sin_dp = sp_u * cp_v - cp_u * sp_v;
+            igraph_real_t inv_denom = 1.0 / denom;
+
+            /* d(delta)/d(theta_i) */
+            igraph_real_t dd_ti = (st_u * ct_v - ct_u * st_v * cos_dp) * inv_denom;
+            /* d(delta)/d(phi_i) */
+            igraph_real_t dd_pi = st_u * st_v * sin_dp * inv_denom;
+            /* d(delta)/d(theta_j) */
+            igraph_real_t dd_tj = (ct_u * st_v - st_u * ct_v * cos_dp) * inv_denom;
+            /* d(delta)/d(phi_j) = -d(delta)/d(phi_i) */
+
+            igraph_real_t g = wc * factor;
+
+            MATRIX(angles, u, 0) -= g * dd_ti;
+            MATRIX(angles, u, 1) -= g * dd_pi;
+            MATRIX(angles, v, 0) -= g * dd_tj;
+            MATRIX(angles, v, 1) += g * dd_pi;
         }
 
-        /* Convert angular positions to Cartesian for step readback */
+        /* Convert angular positions to Cartesian for step readback.
+         * Reuse precomputed sin/cos tables from the inner loop. */
         for (i = 0; i < no_of_nodes; i++) {
-            igraph_real_t theta = MATRIX(angles, i, 0);
-            igraph_real_t phi   = MATRIX(angles, i, 1);
-            MATRIX(*res, i, 0) = sin(theta) * cos(phi);
-            MATRIX(*res, i, 1) = sin(theta) * sin(phi);
-            MATRIX(*res, i, 2) = cos(theta);
+            MATRIX(*res, i, 0) = VECTOR(sin_theta)[i] * VECTOR(cos_phi)[i];
+            MATRIX(*res, i, 1) = VECTOR(sin_theta)[i] * VECTOR(sin_phi)[i];
+            MATRIX(*res, i, 2) = VECTOR(cos_theta)[i];
         }
         IGRAPH_STEP(res, NULL);
     }
     IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
 
-    igraph_matrix_destroy(&grad);
+    igraph_vector_destroy(&cos_phi);
+    igraph_vector_destroy(&sin_phi);
+    igraph_vector_destroy(&cos_theta);
+    igraph_vector_destroy(&sin_theta);
     igraph_vector_destroy(&etas);
     igraph_vector_int_destroy(&indices);
     igraph_matrix_destroy(&angles);
     igraph_matrix_destroy(&d);
-    IGRAPH_FINALLY_CLEAN(5);
+    IGRAPH_FINALLY_CLEAN(8);
 
     return IGRAPH_SUCCESS;
 }
