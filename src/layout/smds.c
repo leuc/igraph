@@ -207,11 +207,8 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
     for (igraph_int_t step_idx = 0; step_idx < num_iter; step_idx++) {
         igraph_real_t step = VECTOR(etas)[step_idx];
 
-        /* Report progress periodically, allow readback every iteration */
-        if (step_idx % 10 == 0) {
-            IGRAPH_PROGRESS("Spherical MDS layout",
-                            100.0 * step_idx / num_iter, NULL);
-        }
+        IGRAPH_PROGRESS("Spherical MDS layout",
+                        100.0 * step_idx / num_iter, NULL);
         IGRAPH_STEP(res, NULL);
 
         /* Shuffle indices for stochasticity */
@@ -245,10 +242,10 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
             igraph_i_smds_gradient(theta_i, phi_i, theta_j, phi_j, &grad);
 
-            /* g = 2 * w_ij * (delta - d_ij) * d(delta)/d(X)
-             * w_ij = d_ij^{-2} normalizes contributions across distance scales */
-            igraph_real_t w_ij = 1.0 / (target_d * target_d);
-            igraph_real_t factor = 2.0 * w_ij * (delta - target_d);
+            /* g = 2 * (delta - d_ij) * d(delta)/d(X)
+             * Note: w_ij = d_ij^{-2} is accounted for in the learning rate
+             * schedule, not in the gradient itself (matches reference impl). */
+            igraph_real_t factor = 2.0 * (delta - target_d);
 
             MATRIX(*res, u, 0) -= wc * MATRIX(grad, 0, 0) * factor;
             MATRIX(*res, u, 1) -= wc * MATRIX(grad, 0, 1) * factor;
