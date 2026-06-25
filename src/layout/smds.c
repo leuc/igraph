@@ -144,6 +144,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
     const igraph_int_t no_of_nodes = igraph_vcount(graph);
     igraph_matrix_t d;
+    igraph_matrix_t angles;
     igraph_vector_t etas;
     igraph_vector_int_t indices;
     igraph_matrix_t grad;
@@ -178,11 +179,21 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         igraph_matrix_scale(&d, scale);
     }
 
-    /* 2. Initialize positions: theta in [0, pi], phi in [0, 2*pi] */
-    IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 2));
+    /* 2. Initialize angular positions: theta in [0, pi], phi in [0, 2*pi] */
+    IGRAPH_MATRIX_INIT_FINALLY(&angles, no_of_nodes, 2);
     for (i = 0; i < no_of_nodes; i++) {
-        MATRIX(*res, i, 0) = RNG_UNIF(0.0, M_PI);
-        MATRIX(*res, i, 1) = RNG_UNIF(0.0, 2.0 * M_PI);
+        MATRIX(angles, i, 0) = RNG_UNIF(0.0, M_PI);
+        MATRIX(angles, i, 1) = RNG_UNIF(0.0, 2.0 * M_PI);
+    }
+
+    /* Initialize res as n-by-3 Cartesian output */
+    IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
+    for (i = 0; i < no_of_nodes; i++) {
+        igraph_real_t theta = MATRIX(angles, i, 0);
+        igraph_real_t phi   = MATRIX(angles, i, 1);
+        MATRIX(*res, i, 0) = sin(theta) * cos(phi);
+        MATRIX(*res, i, 1) = sin(theta) * sin(phi);
+        MATRIX(*res, i, 2) = cos(theta);
     }
 
     /* 3. Prepare pairs for SGD */
@@ -209,7 +220,6 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
         IGRAPH_PROGRESS("Spherical MDS layout",
                         100.0 * step_idx / num_iter, NULL);
-        IGRAPH_STEP(res, NULL);
 
         /* Shuffle indices for stochasticity */
         for (i = num_pairs - 1; i > 0; i--) {
@@ -233,10 +243,10 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             if (wc > lr_cap) wc = lr_cap;
 
             igraph_real_t target_d = MATRIX(d, u, v);
-            igraph_real_t theta_i = MATRIX(*res, u, 0);
-            igraph_real_t phi_i   = MATRIX(*res, u, 1);
-            igraph_real_t theta_j = MATRIX(*res, v, 0);
-            igraph_real_t phi_j   = MATRIX(*res, v, 1);
+            igraph_real_t theta_i = MATRIX(angles, u, 0);
+            igraph_real_t phi_i   = MATRIX(angles, u, 1);
+            igraph_real_t theta_j = MATRIX(angles, v, 0);
+            igraph_real_t phi_j   = MATRIX(angles, v, 1);
 
             igraph_real_t delta = igraph_i_smds_geodesic(theta_i, phi_i, theta_j, phi_j);
 
@@ -247,29 +257,30 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
              * schedule, not in the gradient itself (matches reference impl). */
             igraph_real_t factor = 2.0 * (delta - target_d);
 
-            MATRIX(*res, u, 0) -= wc * MATRIX(grad, 0, 0) * factor;
-            MATRIX(*res, u, 1) -= wc * MATRIX(grad, 0, 1) * factor;
-            MATRIX(*res, v, 0) -= wc * MATRIX(grad, 1, 0) * factor;
-            MATRIX(*res, v, 1) -= wc * MATRIX(grad, 1, 1) * factor;
+            MATRIX(angles, u, 0) -= wc * MATRIX(grad, 0, 0) * factor;
+            MATRIX(angles, u, 1) -= wc * MATRIX(grad, 0, 1) * factor;
+            MATRIX(angles, v, 0) -= wc * MATRIX(grad, 1, 0) * factor;
+            MATRIX(angles, v, 1) -= wc * MATRIX(grad, 1, 1) * factor;
         }
+
+        /* Convert angular positions to Cartesian for step readback */
+        for (i = 0; i < no_of_nodes; i++) {
+            igraph_real_t theta = MATRIX(angles, i, 0);
+            igraph_real_t phi   = MATRIX(angles, i, 1);
+            MATRIX(*res, i, 0) = sin(theta) * cos(phi);
+            MATRIX(*res, i, 1) = sin(theta) * sin(phi);
+            MATRIX(*res, i, 2) = cos(theta);
+        }
+        IGRAPH_STEP(res, NULL);
     }
     IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
-
-    /* 6. Convert angular (theta, phi) to Cartesian (x, y, z) on unit sphere */
-    IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
-    for (i = no_of_nodes - 1; i >= 0; i--) {
-        igraph_real_t theta = MATRIX(*res, i, 0);
-        igraph_real_t phi   = MATRIX(*res, i, 1);
-        MATRIX(*res, i, 0) = sin(theta) * cos(phi);
-        MATRIX(*res, i, 1) = sin(theta) * sin(phi);
-        MATRIX(*res, i, 2) = cos(theta);
-    }
 
     igraph_matrix_destroy(&grad);
     igraph_vector_destroy(&etas);
     igraph_vector_int_destroy(&indices);
+    igraph_matrix_destroy(&angles);
     igraph_matrix_destroy(&d);
-    IGRAPH_FINALLY_CLEAN(4);
+    IGRAPH_FINALLY_CLEAN(5);
 
     return IGRAPH_SUCCESS;
 }
