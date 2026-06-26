@@ -216,7 +216,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         igraph_real_t max_dist = 0.0;
         igraph_int_t i, j, k;
 
-        if (dist == 0) {
+        if (dist == NULL) {
             IGRAPH_MATRIX_INIT_FINALLY(&d, no_of_nodes, no_of_nodes);
             IGRAPH_CHECK(igraph_distances(graph, NULL, &d, igraph_vss_all(), igraph_vss_all(), IGRAPH_ALL));
         } else {
@@ -326,6 +326,11 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             igraph_i_smds_update_cartesian(res, &sin_theta, &cos_theta, &sin_phi, &cos_phi, no_of_nodes);
             IGRAPH_STEP(res, NULL);
         }
+
+        /* Recompute trig from final angles after last SGD iteration */
+        igraph_i_smds_compute_trig(&angles, &sin_theta, &cos_theta, &sin_phi, &cos_phi, no_of_nodes);
+        igraph_i_smds_update_cartesian(res, &sin_theta, &cos_theta, &sin_phi, &cos_phi, no_of_nodes);
+
         IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
 
         igraph_vector_destroy(&cos_phi); igraph_vector_destroy(&sin_phi);
@@ -363,16 +368,17 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
         IGRAPH_MATRIX_INIT_FINALLY(&d_landmark, l, no_of_nodes);
 
-        if (dist == 0) {
+        if (dist == NULL) {
             igraph_vs_t from_vs;
             igraph_vector_int_t landmark_vids;
             IGRAPH_VECTOR_INT_INIT_FINALLY(&landmark_vids, l);
             for (i = 0; i < l; i++) VECTOR(landmark_vids)[i] = VECTOR(perm)[i];
             IGRAPH_CHECK(igraph_vs_vector(&from_vs, &landmark_vids));
+            IGRAPH_FINALLY(igraph_vs_destroy, &from_vs);
             IGRAPH_CHECK(igraph_distances(graph, NULL, &d_landmark, from_vs, igraph_vss_all(), IGRAPH_ALL));
             igraph_vs_destroy(&from_vs);
             igraph_vector_int_destroy(&landmark_vids);
-            IGRAPH_FINALLY_CLEAN(1);
+            IGRAPH_FINALLY_CLEAN(2);
         } else {
             #pragma omp parallel for private(j) default(none) shared(d_landmark, dist, perm, l, no_of_nodes)
             for (i = 0; i < l; i++) {
@@ -420,8 +426,11 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         for (i = 0; i < 3; i++) {
             for (j = 0; j < 3; j++) {
                 igraph_real_t sum = 0.0;
-                for (k = 0; k < l; k++) sum += MATRIX(res_sub, k, i) * MATRIX(res_sub, k, j);
-                MATRIX(S, i, j) = sum / (l - 1);
+                for (k = 0; k < l; k++) {
+                    IGRAPH_ALLOW_INTERRUPTION();
+                    sum += MATRIX(res_sub, k, i) * MATRIX(res_sub, k, j);
+                }
+                MATRIX(S, i, j) = sum / l;
             }
         }
 
@@ -472,7 +481,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         igraph_vector_destroy(&row_means); igraph_matrix_destroy(&res_sub);
         igraph_matrix_destroy(&d_sub); igraph_destroy(&landmark_graph);
         igraph_matrix_destroy(&d_landmark); igraph_vector_int_destroy(&perm);
-        IGRAPH_FINALLY_CLEAN(11);
+        IGRAPH_FINALLY_CLEAN(12);
 
         return IGRAPH_SUCCESS;
     }
