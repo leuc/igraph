@@ -134,9 +134,11 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
             if (raw_norm < 0.3 && norm > 1e-8) {
                 unsigned int seed = (unsigned int)(v + 1);
                 seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-                igraph_real_t theta = ((igraph_real_t)(seed % 1000) / 1000.0) * M_PI;
+                igraph_real_t z = (((igraph_real_t)(seed % 2000) / 1000.0) - 1.0);
+                igraph_real_t theta = acos(z);
+
                 seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-                igraph_real_t phi   = ((igraph_real_t)(seed % 1000) / 1000.0) * 2.0 * M_PI;
+                igraph_real_t phi = ((igraph_real_t)(seed % 1000) / 1000.0) * 2.0 * M_PI;
                 MATRIX(*res, v, 0) = sin(theta) * cos(phi);
                 MATRIX(*res, v, 1) = sin(theta) * sin(phi);
                 MATRIX(*res, v, 2) = cos(theta);
@@ -147,9 +149,11 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
             } else {
                 unsigned int seed = (unsigned int)(v + 1);
                 seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-                igraph_real_t theta = ((igraph_real_t)(seed % 1000) / 1000.0) * M_PI;
+                igraph_real_t z = (((igraph_real_t)(seed % 2000) / 1000.0) - 1.0);
+                igraph_real_t theta = acos(z);
+
                 seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
-                igraph_real_t phi   = ((igraph_real_t)(seed % 1000) / 1000.0) * 2.0 * M_PI;
+                igraph_real_t phi = ((igraph_real_t)(seed % 1000) / 1000.0) * 2.0 * M_PI;
 
                 MATRIX(*res, v, 0) = sin(theta) * cos(phi);
                 MATRIX(*res, v, 1) = sin(theta) * sin(phi);
@@ -464,15 +468,17 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
         MATRIX(d_sub, i, i) = 0.0;
     }
 
-    igraph_real_t max_d_sub = 0.0;
-    #pragma omp parallel for reduction(max:max_d_sub) private(j) default(none) shared(d_sub, l)
+    igraph_real_t global_max_d = 0.0;
+    #pragma omp parallel for reduction(max:global_max_d) private(j) default(none) shared(d_landmark, l, no_of_nodes)
     for (i = 0; i < l; i++) {
-        for (j = 0; j < l; j++) {
-            if (MATRIX(d_sub, i, j) > max_d_sub) max_d_sub = MATRIX(d_sub, i, j);
+        for (j = 0; j < no_of_nodes; j++) {
+            if (isfinite(MATRIX(d_landmark, i, j)) && MATRIX(d_landmark, i, j) > global_max_d) {
+                global_max_d = MATRIX(d_landmark, i, j);
+            }
         }
     }
-    if (max_d_sub > 0.0) {
-        igraph_real_t scale = M_PI / max_d_sub;
+    if (global_max_d > 0.0) {
+        igraph_real_t scale = M_PI / global_max_d;
         igraph_matrix_scale(&d_sub, scale);
         igraph_matrix_scale(&d_landmark, scale);
     }
