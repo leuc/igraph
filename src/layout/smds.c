@@ -94,7 +94,7 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
                                             igraph_real_t mean_x,
                                             igraph_real_t mean_y,
                                             igraph_real_t mean_z) {
-    #pragma omp parallel for default(none) shared(res, res_sub, d_landmark, x_1_s_inv, q_vector, landmark_map, no_of_nodes, l, mean_x, mean_y, mean_z)
+    #pragma omp parallel for default(none) shared(res, res_sub, d_landmark, x_1_s_inv, q_vector, landmark_map, no_of_nodes, l, mean_x, mean_y, mean_z, stderr)
     for (igraph_int_t v = 0; v < no_of_nodes; v++) {
         igraph_int_t l_idx = VECTOR(*landmark_map)[v];
         if (l_idx != -1) {
@@ -104,9 +104,15 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
         } else {
             igraph_real_t x_v[3] = {0.0, 0.0, 0.0};
             for (igraph_int_t i = 0; i < l; i++) {
-                igraph_real_t d_vi = MATRIX(*d_landmark, i, v);
+            igraph_real_t d_vi = MATRIX(*d_landmark, i, v);
+            igraph_real_t a_vi;
+            if (isfinite(d_vi)) {
                 igraph_real_t chord = 2.0 * sin(d_vi / 2.0);
-                igraph_real_t a_vi = chord * chord;
+                a_vi = chord * chord;
+            } else {
+                if (v == 0 || v == 1) fprintf(stderr, "  WARN: non-finite d_vi at v=%lld i=%lld d_vi=%g\n", (long long)v, (long long)i, d_vi);
+                a_vi = 4.0;
+            }
                 igraph_real_t diff = VECTOR(*q_vector)[i] - a_vi;
 
                 x_v[0] += diff * MATRIX(*x_1_s_inv, i, 0);
@@ -117,12 +123,24 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
             x_v[1] /= (2.0 * l);
             x_v[2] /= (2.0 * l);
 
+            igraph_real_t raw_norm = sqrt(x_v[0]*x_v[0] + x_v[1]*x_v[1] + x_v[2]*x_v[2]);
+
             x_v[0] += mean_x;
             x_v[1] += mean_y;
             x_v[2] += mean_z;
 
             igraph_real_t norm = sqrt(x_v[0]*x_v[0] + x_v[1]*x_v[1] + x_v[2]*x_v[2]);
-            if (norm > 1e-8) {
+
+            if (raw_norm < 0.3 && norm > 1e-8) {
+                unsigned int seed = (unsigned int)(v + 1);
+                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                igraph_real_t theta = ((igraph_real_t)(seed % 1000) / 1000.0) * M_PI;
+                seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+                igraph_real_t phi   = ((igraph_real_t)(seed % 1000) / 1000.0) * 2.0 * M_PI;
+                MATRIX(*res, v, 0) = sin(theta) * cos(phi);
+                MATRIX(*res, v, 1) = sin(theta) * sin(phi);
+                MATRIX(*res, v, 2) = cos(theta);
+            } else if (norm > 1e-8) {
                 MATRIX(*res, v, 0) = x_v[0] / norm;
                 MATRIX(*res, v, 1) = x_v[1] / norm;
                 MATRIX(*res, v, 2) = x_v[2] / norm;
@@ -367,12 +385,50 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
     igraph_int_t i, j, k;
 
     IGRAPH_VECTOR_INT_INIT_FINALLY(&perm, no_of_nodes);
-    for (i = 0; i < no_of_nodes; i++) VECTOR(perm)[i] = i;
-    for (i = no_of_nodes - 1; i > 0; i--) {
-        igraph_int_t swap_idx = RNG_INTEGER(0, i);
-        igraph_int_t tmp = VECTOR(perm)[i];
-        VECTOR(perm)[i] = VECTOR(perm)[swap_idx];
-        VECTOR(perm)[swap_idx] = tmp;
+
+    /* Sample all landmarks from the largest connected component only.
+       This ensures the landmark graph is connected so SGD works.
+       Nodes in smaller components get a_vi=4.0 fallback in interpolation. */
+    {
+        igraph_vector_int_t comp_membership;
+        igraph_int_t comps;
+        igraph_int_t best_comp = 0, best_size = 0;
+        igraph_int_t ci;
+
+        IGRAPH_VECTOR_INT_INIT_FINALLY(&comp_membership, 0);
+        IGRAPH_CHECK(igraph_connected_components(graph, &comp_membership, NULL, &comps, IGRAPH_WEAK));
+
+        for (ci = 0; ci < comps; ci++) {
+            igraph_int_t cnt = 0;
+            for (i = 0; i < no_of_nodes; i++) {
+                if (VECTOR(comp_membership)[i] == ci) cnt++;
+            }
+            if (cnt > best_size) { best_size = cnt; best_comp = ci; }
+        }
+
+        /* Collect all nodes from the largest component into perm[0..best_size-1] */
+        igraph_int_t pos = 0;
+        for (i = 0; i < no_of_nodes; i++) {
+            if (VECTOR(comp_membership)[i] == best_comp) {
+                VECTOR(perm)[pos++] = i;
+            }
+        }
+        /* Shuffle all largest-component nodes */
+        for (i = pos - 1; i > 0; i--) {
+            igraph_int_t swap_idx = RNG_INTEGER(0, i);
+            igraph_int_t tmp = VECTOR(perm)[i];
+            VECTOR(perm)[i] = VECTOR(perm)[swap_idx];
+            VECTOR(perm)[swap_idx] = tmp;
+        }
+        /* Now fill the rest of perm with nodes from other components */
+        for (i = 0; i < no_of_nodes && pos < no_of_nodes; i++) {
+            if (VECTOR(comp_membership)[i] != best_comp) {
+                VECTOR(perm)[pos++] = i;
+            }
+        }
+
+        igraph_vector_int_destroy(&comp_membership);
+        IGRAPH_FINALLY_CLEAN(1);
     }
 
     IGRAPH_MATRIX_INIT_FINALLY(&d_landmark, l, no_of_nodes);
@@ -429,6 +485,20 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
 
     IGRAPH_PROGRESS("Spherical MDS layout (interpolation)", 50, NULL);
 
+    /* DEBUG: print d_sub and d_landmark */
+    fprintf(stderr, "\n=== DEBUG interpolation_mds ===\n");
+    fprintf(stderr, "l=%lld no_of_nodes=%lld\n", (long long)l, (long long)no_of_nodes);
+    fprintf(stderr, "d_sub (scaled landmark-landmark distances):\n");
+    for (i = 0; i < l && i < 10; i++) {
+        for (j = 0; j < l && j < 10; j++)
+            fprintf(stderr, " %.4f", MATRIX(d_sub, i, j));
+        if (l > 10) fprintf(stderr, " ...");
+        fprintf(stderr, "\n");
+    }
+    fprintf(stderr, "res_sub (before centering):\n");
+    for (i = 0; i < l && i < 10; i++)
+        fprintf(stderr, "  %.6f %.6f %.6f\n", MATRIX(res_sub, i, 0), MATRIX(res_sub, i, 1), MATRIX(res_sub, i, 2));
+
     /* Center landmark coordinates so Gower interpolation formula works */
     igraph_real_t mean_x = 0.0, mean_y = 0.0, mean_z = 0.0;
     for (i = 0; i < l; i++) {
@@ -437,11 +507,15 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
         mean_z += MATRIX(res_sub, i, 2);
     }
     mean_x /= l; mean_y /= l; mean_z /= l;
+    fprintf(stderr, "centroid: %.6f %.6f %.6f\n", mean_x, mean_y, mean_z);
     for (i = 0; i < l; i++) {
         MATRIX(res_sub, i, 0) -= mean_x;
         MATRIX(res_sub, i, 1) -= mean_y;
         MATRIX(res_sub, i, 2) -= mean_z;
     }
+    fprintf(stderr, "res_sub (after centering):\n");
+    for (i = 0; i < l && i < 10; i++)
+        fprintf(stderr, "  %.6f %.6f %.6f\n", MATRIX(res_sub, i, 0), MATRIX(res_sub, i, 1), MATRIX(res_sub, i, 2));
 
     IGRAPH_VECTOR_INIT_FINALLY(&q_vector, l);
     for (i = 0; i < l; i++) {
@@ -450,6 +524,10 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
         igraph_real_t nz = MATRIX(res_sub, i, 2);
         VECTOR(q_vector)[i] = nx * nx + ny * ny + nz * nz;
     }
+    fprintf(stderr, "q_vector[0:%lld]:\n", (long long)l);
+    for (i = 0; i < l && i < 10; i++) fprintf(stderr, "  %.6f", VECTOR(q_vector)[i]);
+    if (l > 10) fprintf(stderr, " ...");
+    fprintf(stderr, "\n");
 
     IGRAPH_MATRIX_INIT_FINALLY(&S, 3, 3);
     for (i = 0; i < 3; i++) {
@@ -462,16 +540,21 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
             MATRIX(S, i, j) = sum / (l - 1);
         }
     }
+    fprintf(stderr, "S (3x3):\n");
+    for (i = 0; i < 3; i++)
+        fprintf(stderr, "  %.6f %.6f %.6f\n", MATRIX(S, i, 0), MATRIX(S, i, 1), MATRIX(S, i, 2));
 
     IGRAPH_MATRIX_INIT_FINALLY(&S_inv, 3, 3);
     igraph_real_t det = MATRIX(S, 0, 0) * (MATRIX(S, 1, 1) * MATRIX(S, 2, 2) - MATRIX(S, 1, 2) * MATRIX(S, 2, 1))
                       - MATRIX(S, 0, 1) * (MATRIX(S, 1, 0) * MATRIX(S, 2, 2) - MATRIX(S, 1, 2) * MATRIX(S, 2, 0))
                       + MATRIX(S, 0, 2) * (MATRIX(S, 1, 0) * MATRIX(S, 2, 1) - MATRIX(S, 1, 1) * MATRIX(S, 2, 0));
+    fprintf(stderr, "det(S)=%.10f\n", det);
 
     if (fabs(det) < 1e-9) {
         for (i = 0; i < 3; i++) {
             for (j = 0; j < 3; j++) MATRIX(S_inv, i, j) = (i == j) ? 1.0 : 0.0;
         }
+        fprintf(stderr, "S_inv set to identity (det near zero)\n");
     } else {
         igraph_real_t inv_det = 1.0 / det;
         MATRIX(S_inv, 0, 0) = (MATRIX(S, 1, 1) * MATRIX(S, 2, 2) - MATRIX(S, 1, 2) * MATRIX(S, 2, 1)) * inv_det;
@@ -484,6 +567,9 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
         MATRIX(S_inv, 2, 1) = (MATRIX(S, 0, 1) * MATRIX(S, 2, 0) - MATRIX(S, 0, 0) * MATRIX(S, 2, 1)) * inv_det;
         MATRIX(S_inv, 2, 2) = (MATRIX(S, 0, 0) * MATRIX(S, 1, 1) - MATRIX(S, 0, 1) * MATRIX(S, 1, 0)) * inv_det;
     }
+    fprintf(stderr, "S_inv (3x3):\n");
+    for (i = 0; i < 3; i++)
+        fprintf(stderr, "  %.6f %.6f %.6f\n", MATRIX(S_inv, i, 0), MATRIX(S_inv, i, 1), MATRIX(S_inv, i, 2));
 
     IGRAPH_MATRIX_INIT_FINALLY(&x_1_s_inv, l, 3);
     #pragma omp parallel for private(j, k) default(none) shared(x_1_s_inv, res_sub, S_inv, l)
@@ -494,6 +580,9 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
             MATRIX(x_1_s_inv, i, j) = sum;
         }
     }
+    fprintf(stderr, "x_1_s_inv[0:%lld][:]\n", (long long)l);
+    for (i = 0; i < l && i < 10; i++)
+        fprintf(stderr, "  %.6f %.6f %.6f\n", MATRIX(x_1_s_inv, i, 0), MATRIX(x_1_s_inv, i, 1), MATRIX(x_1_s_inv, i, 2));
 
     IGRAPH_VECTOR_INT_INIT_FINALLY(&landmark_map, no_of_nodes);
     igraph_vector_int_fill(&landmark_map, -1);
@@ -505,6 +594,12 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
 
     igraph_i_smds_gower_interpolate(res, &res_sub, &d_landmark, &x_1_s_inv, &q_vector, &landmark_map, no_of_nodes, l,
                                     mean_x, mean_y, mean_z);
+    /* DEBUG: print first few interpolated coords */
+    fprintf(stderr, "result[0:10] (on sphere):\n");
+    for (i = 0; i < 10 && i < no_of_nodes; i++)
+        fprintf(stderr, "  %.6f %.6f %.6f\n", MATRIX(*res, i, 0), MATRIX(*res, i, 1), MATRIX(*res, i, 2));
+    fprintf(stderr, "=== END DEBUG ===\n\n");
+
     IGRAPH_STEP(res, NULL);
     IGRAPH_PROGRESS("Spherical MDS layout (interpolation)", 100, NULL);
 
