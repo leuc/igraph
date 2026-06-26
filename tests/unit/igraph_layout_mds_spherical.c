@@ -90,6 +90,59 @@ int main(void) {
     igraph_matrix_destroy(&coords);
     igraph_destroy(&g);
 
+    /* Test 4: Big data path (>1000 nodes) with graph distances */
+    {
+        igraph_int_t n = 1010;
+        igraph_ring(&g, n, IGRAPH_UNDIRECTED, 0, 1);
+        igraph_matrix_init(&coords, 0, 0);
+        igraph_layout_mds_spherical(&g, &coords, NULL, 20, 0.1);
+        if (igraph_matrix_nrow(&coords) != n || igraph_matrix_ncol(&coords) != 3) {
+            printf("Test 4: Expected %" IGRAPH_PRId "x3, got %" IGRAPH_PRId "x%" IGRAPH_PRId "\n",
+                   n, igraph_matrix_nrow(&coords), igraph_matrix_ncol(&coords));
+            return 1;
+        }
+        for (i = 0; i < n; i++) {
+            double norm = 0.0;
+            for (j = 0; j < 3; j++) {
+                norm += MATRIX(coords, i, j) * MATRIX(coords, i, j);
+            }
+            if (fabs(sqrt(norm) - 1.0) > 1e-6) {
+                printf("Test 4: Vertex %" IGRAPH_PRId " not on unit sphere: norm = %g\n", i, sqrt(norm));
+                return 1;
+            }
+        }
+        igraph_matrix_destroy(&coords);
+        igraph_destroy(&g);
+    }
+
+    /* Test 5: Big data path with precomputed distance matrix */
+    {
+        igraph_int_t n = 1010;
+        igraph_ring(&g, n, IGRAPH_UNDIRECTED, 0, 1);
+        igraph_matrix_init(&coords, 0, 0);
+        igraph_matrix_init(&dist_mat, 0, 0);
+        igraph_distances(&g, NULL, &dist_mat, igraph_vss_all(), igraph_vss_all(), IGRAPH_ALL);
+        igraph_layout_mds_spherical(&g, &coords, &dist_mat, 20, 0.1);
+        if (igraph_matrix_nrow(&coords) != n || igraph_matrix_ncol(&coords) != 3) {
+            printf("Test 5: Expected %" IGRAPH_PRId "x3, got %" IGRAPH_PRId "x%" IGRAPH_PRId "\n",
+                   n, igraph_matrix_nrow(&coords), igraph_matrix_ncol(&coords));
+            return 1;
+        }
+        for (i = 0; i < n; i++) {
+            double norm = 0.0;
+            for (j = 0; j < 3; j++) {
+                norm += MATRIX(coords, i, j) * MATRIX(coords, i, j);
+            }
+            if (fabs(sqrt(norm) - 1.0) > 1e-6) {
+                printf("Test 5: Vertex %" IGRAPH_PRId " not on unit sphere: norm = %g\n", i, sqrt(norm));
+                return 1;
+            }
+        }
+        igraph_matrix_destroy(&dist_mat);
+        igraph_matrix_destroy(&coords);
+        igraph_destroy(&g);
+    }
+
     VERIFY_FINALLY_STACK();
 
     return 0;
