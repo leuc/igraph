@@ -132,6 +132,11 @@ IGRAPH_EXPERIMENTAL IGRAPH_EXPORT igraph_error_t igraph_layout_mds_spherical(
     const igraph_matrix_t *dist, igraph_int_t num_iter,
     igraph_real_t lr_cap);
 
+IGRAPH_EXPERIMENTAL IGRAPH_EXPORT igraph_error_t igraph_layout_mds_spherical_interpolation(
+    const igraph_t *graph, igraph_matrix_t *res,
+    const igraph_matrix_t *dist, igraph_int_t num_iter,
+    igraph_real_t lr_cap, igraph_int_t l);
+
 IGRAPH_EXPORT igraph_error_t igraph_layout_bipartite(const igraph_t *graph,
                                           const igraph_vector_bool_t *types,
                                           igraph_matrix_t *res, igraph_real_t hgap,

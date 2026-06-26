@@ -1,11 +1,24 @@
+=== Empty graph ===
 [ 0-by-3 ]
-[  0.91265 -0.371564 -0.170324
-   0.66217 -0.0766614 -0.745422
-  0.735348 -0.471158 0.487107
-  -0.00621329 -0.346456 -0.938046
-   0.46809 0.647208 -0.601676
-  0.451974 -0.116841 0.884346
-  0.276883 -0.477939 0.833613
-  -0.580116 -0.397052 -0.711207
-  -0.543883 -0.0334717 -0.838493
-  0.0144909 0.944889 -0.327069 ]
+=== 2-node graph ===
+  direct-2node: all on sphere [2 nodes]
+  interp-2node: all on sphere [2 nodes]
+=== Tree(10) ===
+  direct-tree10: all on sphere [10 nodes]
+  interp-tree10: all on sphere [10 nodes]
+=== Ring(10) ===
+  direct-ring10: all on sphere [10 nodes]
+  interp-ring10: all on sphere [10 nodes]
+=== Full(6) with precomputed dist ===
+  direct-full6-dist: all on sphere [6 nodes]
+  interp-full6-dist: all on sphere [6 nodes]
+=== Ring(50) ===
+  direct-ring50: all on sphere [50 nodes]
+  stress-direct-ring50: raw_stress=6.31909 norm_stress=0.00153539
+  interp-ring50: all on sphere [50 nodes]
+  stress-interp-ring50: raw_stress=0.714057 norm_stress=0.000173499
+=== Ring(150) with precomputed dist ===
+  interp-ring150-dist: all on sphere [150 nodes]
+=== Direct SGD on ring(600) ===
+  direct-ring600: all on sphere [600 nodes]
+All tests passed.
