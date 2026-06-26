@@ -474,6 +474,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
         /* Highly parallel global reconstruction step */
         igraph_i_smds_gower_interpolate(res, &res_sub, &d_landmark, &x_1_s_inv, &q_vector, &landmark_map, no_of_nodes, l);
+        IGRAPH_STEP(res, NULL);
 
         igraph_vector_int_destroy(&landmark_map); igraph_matrix_destroy(&x_1_s_inv);
         igraph_matrix_destroy(&S_inv); igraph_matrix_destroy(&S);
