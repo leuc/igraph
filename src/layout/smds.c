@@ -390,8 +390,10 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
 
     IGRAPH_VECTOR_INT_INIT_FINALLY(&perm, no_of_nodes);
 
-    /* Sample all landmarks from the largest connected component only.
-       This ensures the landmark graph is connected so SGD works.
+    /* Sample all landmarks from the largest connected component only using
+       the MaxMin heuristic (Farthest Point Sampling). This ensures landmarks
+       span the true diameter of the graph, which vastly improves Gower's
+       interpolation accuracy for remote nodes.
        Nodes in smaller components get a_vi=4.0 fallback in interpolation. */
     {
         igraph_vector_int_t comp_membership;
@@ -410,52 +412,104 @@ igraph_error_t igraph_layout_mds_spherical_interpolation(
             if (cnt > best_size) { best_size = cnt; best_comp = ci; }
         }
 
-        /* Collect all nodes from the largest component into perm[0..best_size-1] */
-        igraph_int_t pos = 0;
+        /* Collect all node IDs from the largest component into comp_nodes */
+        igraph_vector_int_t comp_nodes;
+        IGRAPH_VECTOR_INT_INIT_FINALLY(&comp_nodes, 0);
         for (i = 0; i < no_of_nodes; i++) {
             if (VECTOR(comp_membership)[i] == best_comp) {
-                VECTOR(perm)[pos++] = i;
+                IGRAPH_CHECK(igraph_vector_int_push_back(&comp_nodes, i));
             }
         }
-        /* Shuffle all largest-component nodes */
-        for (i = pos - 1; i > 0; i--) {
-            igraph_int_t swap_idx = RNG_INTEGER(0, i);
-            igraph_int_t tmp = VECTOR(perm)[i];
-            VECTOR(perm)[i] = VECTOR(perm)[swap_idx];
-            VECTOR(perm)[swap_idx] = tmp;
+        igraph_int_t n_comp = igraph_vector_int_size(&comp_nodes);
+        if (l > n_comp) l = n_comp;
+
+        /* Allocate d_landmark here, inside the block, so it sits above perm on
+           the FINALLY stack (perm was pushed first, d_landmark second) */
+        IGRAPH_MATRIX_INIT_FINALLY(&d_landmark, l, no_of_nodes);
+
+        /* min_dist[i] = current minimum distance from comp_nodes[i] to any chosen landmark */
+        igraph_vector_t min_dist;
+        IGRAPH_VECTOR_INIT_FINALLY(&min_dist, n_comp);
+        for (i = 0; i < n_comp; i++) VECTOR(min_dist)[i] = IGRAPH_INFINITY;
+
+        /* ---------- MaxMin iterative selection ---------- */
+        for (k = 0; k < l; k++) {
+            igraph_int_t next;
+            if (k == 0) {
+                /* Pick the first landmark uniformly at random from the largest component */
+                igraph_int_t idx = RNG_INTEGER(0, n_comp - 1);
+                next = VECTOR(comp_nodes)[idx];
+            } else {
+                /* Pick the node with the largest minimum distance to existing landmarks */
+                igraph_int_t best_idx = 0;
+                igraph_real_t best_val = -1.0;
+                for (i = 0; i < n_comp; i++) {
+                    if (VECTOR(min_dist)[i] > best_val) {
+                        best_val = VECTOR(min_dist)[i];
+                        best_idx = i;
+                    }
+                }
+                next = VECTOR(comp_nodes)[best_idx];
+            }
+
+            VECTOR(perm)[k] = next;
+
+            /* Compute distances from this landmark to all nodes */
+            if (dist == NULL) {
+                igraph_matrix_t row_mat;
+                IGRAPH_MATRIX_INIT_FINALLY(&row_mat, 0, 0);
+                igraph_vector_int_t src;
+                IGRAPH_VECTOR_INT_INIT_FINALLY(&src, 1);
+                VECTOR(src)[0] = next;
+                igraph_vs_t from_vs;
+                IGRAPH_CHECK(igraph_vs_vector(&from_vs, &src));
+                IGRAPH_FINALLY(igraph_vs_destroy, &from_vs);
+                IGRAPH_CHECK(igraph_distances(graph, NULL, &row_mat, from_vs, igraph_vss_all(), IGRAPH_ALL));
+                for (j = 0; j < no_of_nodes; j++) {
+                    MATRIX(d_landmark, k, j) = MATRIX(row_mat, 0, j);
+                }
+                igraph_vs_destroy(&from_vs);
+                igraph_vector_int_destroy(&src);
+                igraph_matrix_destroy(&row_mat);
+                IGRAPH_FINALLY_CLEAN(3);
+            } else {
+                igraph_int_t u = next;
+                for (j = 0; j < no_of_nodes; j++) {
+                    MATRIX(d_landmark, k, j) = MATRIX(*dist, u, j);
+                }
+            }
+
+            /* Update min_dist for all nodes in the largest component */
+            for (i = 0; i < n_comp; i++) {
+                igraph_int_t node = VECTOR(comp_nodes)[i];
+                igraph_real_t d = MATRIX(d_landmark, k, node);
+                if (d < VECTOR(min_dist)[i]) VECTOR(min_dist)[i] = d;
+            }
         }
-        /* Now fill the rest of perm with nodes from other components */
-        for (i = 0; i < no_of_nodes && pos < no_of_nodes; i++) {
+
+        igraph_vector_destroy(&min_dist);
+        IGRAPH_FINALLY_CLEAN(1);
+
+        /* Fill the rest of perm: unselected largest-component nodes first,
+           then nodes from smaller components */
+        igraph_int_t pos = l;
+        for (i = 0; i < n_comp; i++) {
+            igraph_int_t node = VECTOR(comp_nodes)[i];
+            igraph_bool_t already_chosen = 0;
+            for (j = 0; j < l; j++) {
+                if (VECTOR(perm)[j] == node) { already_chosen = 1; break; }
+            }
+            if (!already_chosen) VECTOR(perm)[pos++] = node;
+        }
+        for (i = 0; i < no_of_nodes; i++) {
             if (VECTOR(comp_membership)[i] != best_comp) {
                 VECTOR(perm)[pos++] = i;
             }
         }
 
+        igraph_vector_int_destroy(&comp_nodes);
         igraph_vector_int_destroy(&comp_membership);
-        IGRAPH_FINALLY_CLEAN(1);
-    }
-
-    IGRAPH_MATRIX_INIT_FINALLY(&d_landmark, l, no_of_nodes);
-
-    if (dist == NULL) {
-        igraph_vs_t from_vs;
-        igraph_vector_int_t landmark_vids;
-        IGRAPH_VECTOR_INT_INIT_FINALLY(&landmark_vids, l);
-        for (i = 0; i < l; i++) VECTOR(landmark_vids)[i] = VECTOR(perm)[i];
-        IGRAPH_CHECK(igraph_vs_vector(&from_vs, &landmark_vids));
-        IGRAPH_FINALLY(igraph_vs_destroy, &from_vs);
-        IGRAPH_CHECK(igraph_distances(graph, NULL, &d_landmark, from_vs, igraph_vss_all(), IGRAPH_ALL));
-        igraph_vs_destroy(&from_vs);
-        igraph_vector_int_destroy(&landmark_vids);
         IGRAPH_FINALLY_CLEAN(2);
-    } else {
-        #pragma omp parallel for private(j) default(none) shared(d_landmark, dist, perm, l, no_of_nodes)
-        for (i = 0; i < l; i++) {
-            igraph_int_t u = VECTOR(perm)[i];
-            for (j = 0; j < no_of_nodes; j++) {
-                MATRIX(d_landmark, i, j) = MATRIX(*dist, u, j);
-            }
-        }
     }
 
     IGRAPH_MATRIX_INIT_FINALLY(&d_sub, l, l);
