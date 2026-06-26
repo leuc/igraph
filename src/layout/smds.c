@@ -389,18 +389,6 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             }
         }
 
-        igraph_real_t max_dist = 0.0;
-        #pragma omp parallel for reduction(max:max_dist) private(j) default(none) shared(d_landmark, l, no_of_nodes)
-        for (i = 0; i < l; i++) {
-            for (j = 0; j < no_of_nodes; j++) {
-                if (MATRIX(d_landmark, i, j) > max_dist) max_dist = MATRIX(d_landmark, i, j);
-            }
-        }
-        if (max_dist > 0.0) {
-            igraph_real_t scale = M_PI / max_dist;
-            igraph_matrix_scale(&d_landmark, scale);
-        }
-
         IGRAPH_CHECK(igraph_empty(&landmark_graph, l, IGRAPH_UNDIRECTED));
         IGRAPH_FINALLY(igraph_destroy, &landmark_graph);
 
@@ -412,6 +400,19 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
                 MATRIX(d_sub, i, j) = MATRIX(d_landmark, i, v_idx);
             }
             MATRIX(d_sub, i, i) = 0.0;
+        }
+
+        igraph_real_t max_d_sub = 0.0;
+        #pragma omp parallel for reduction(max:max_d_sub) private(j) default(none) shared(d_sub, l)
+        for (i = 0; i < l; i++) {
+            for (j = 0; j < l; j++) {
+                if (MATRIX(d_sub, i, j) > max_d_sub) max_d_sub = MATRIX(d_sub, i, j);
+            }
+        }
+        if (max_d_sub > 0.0) {
+            igraph_real_t scale = M_PI / max_d_sub;
+            igraph_matrix_scale(&d_sub, scale);
+            igraph_matrix_scale(&d_landmark, scale);
         }
 
         IGRAPH_MATRIX_INIT_FINALLY(&res_sub, l, 3);
@@ -472,9 +473,23 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
 
         IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
 
+        IGRAPH_PROGRESS("Spherical MDS layout", 50, NULL);
+
+        /* Place landmark positions so the step handler sees intermediate state */
+        for (i = 0; i < l; i++) {
+            igraph_int_t node = VECTOR(perm)[i];
+            MATRIX(*res, node, 0) = MATRIX(res_sub, i, 0);
+            MATRIX(*res, node, 1) = MATRIX(res_sub, i, 1);
+            MATRIX(*res, node, 2) = MATRIX(res_sub, i, 2);
+        }
+        IGRAPH_STEP(res, NULL);
+
+        IGRAPH_PROGRESS("Spherical MDS layout", 80, NULL);
+
         /* Highly parallel global reconstruction step */
         igraph_i_smds_gower_interpolate(res, &res_sub, &d_landmark, &x_1_s_inv, &q_vector, &landmark_map, no_of_nodes, l);
         IGRAPH_STEP(res, NULL);
+        IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
 
         igraph_vector_int_destroy(&landmark_map); igraph_matrix_destroy(&x_1_s_inv);
         igraph_matrix_destroy(&S_inv); igraph_matrix_destroy(&S);
