@@ -74,7 +74,7 @@ static void igraph_i_smds_gower_center(const igraph_matrix_t *d_sub,
         VECTOR(*row_means)[i] = row_sum / l;
         grand_sum += row_sum;
     }
-    
+
     igraph_real_t grand_mean = grand_sum / (l * l);
 
     #pragma omp parallel for private(j) default(none) shared(d_sub, row_means, Q, q_vector, grand_mean, l)
@@ -114,7 +114,7 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
                 igraph_real_t d_vi = MATRIX(*d_landmark, i, v);
                 igraph_real_t a_vi = d_vi * d_vi;
                 igraph_real_t diff = VECTOR(*q_vector)[i] - a_vi;
-                
+
                 x_v[0] += diff * MATRIX(*x_1_s_inv, i, 0);
                 x_v[1] += diff * MATRIX(*x_1_s_inv, i, 1);
                 x_v[2] += diff * MATRIX(*x_1_s_inv, i, 2);
@@ -206,7 +206,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         return IGRAPH_SUCCESS;
     }
 
-    const igraph_int_t l = 1000;
+    const igraph_int_t l = 500;
 
     if (no_of_nodes <= l) {
         igraph_matrix_t d;
@@ -345,7 +345,6 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         /* Big Data Extension Path */
         igraph_vector_int_t perm;
         igraph_matrix_t d_landmark;
-        igraph_t landmark_graph;
         igraph_matrix_t d_sub;
         igraph_matrix_t res_sub;
         igraph_vector_t row_means;
@@ -389,9 +388,6 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
             }
         }
 
-        IGRAPH_CHECK(igraph_empty(&landmark_graph, l, IGRAPH_UNDIRECTED));
-        IGRAPH_FINALLY(igraph_destroy, &landmark_graph);
-
         IGRAPH_MATRIX_INIT_FINALLY(&d_sub, l, l);
         #pragma omp parallel for private(j) default(none) shared(d_sub, d_landmark, perm, l)
         for (i = 0; i < l; i++) {
@@ -416,7 +412,121 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         }
 
         IGRAPH_MATRIX_INIT_FINALLY(&res_sub, l, 3);
-        IGRAPH_CHECK(igraph_layout_mds_spherical(&landmark_graph, &res_sub, &d_sub, num_iter, lr_cap));
+
+        /* Inline landmark SGD so step handler sees positions on every iteration */
+        {
+            igraph_matrix_t landmark_angles;
+            igraph_vector_t landmark_etas;
+            igraph_vector_int_t landmark_indices;
+            igraph_vector_t l_sin_theta, l_cos_theta, l_sin_phi, l_cos_phi;
+            igraph_int_t landmark_pairs = (l * (l - 1)) / 2;
+
+            IGRAPH_MATRIX_INIT_FINALLY(&landmark_angles, l, 2);
+            for (i = 0; i < l; i++) {
+                MATRIX(landmark_angles, i, 0) = RNG_UNIF(0.0, M_PI);
+                MATRIX(landmark_angles, i, 1) = RNG_UNIF(0.0, 2.0 * M_PI);
+            }
+
+            IGRAPH_VECTOR_INT_INIT_FINALLY(&landmark_indices, landmark_pairs * 2);
+            k = 0;
+            for (i = 0; i < l; i++) {
+                for (j = 0; j < i; j++) {
+                    VECTOR(landmark_indices)[k++] = i;
+                    VECTOR(landmark_indices)[k++] = j;
+                }
+            }
+
+            IGRAPH_VECTOR_INIT_FINALLY(&landmark_etas, 0);
+            IGRAPH_CHECK(igraph_i_smds_schedule(&d_sub, &landmark_etas, 30, 0.01, num_iter));
+
+            IGRAPH_VECTOR_INIT_FINALLY(&l_sin_theta, l);
+            IGRAPH_VECTOR_INIT_FINALLY(&l_cos_theta, l);
+            IGRAPH_VECTOR_INIT_FINALLY(&l_sin_phi, l);
+            IGRAPH_VECTOR_INIT_FINALLY(&l_cos_phi, l);
+
+            IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
+
+            IGRAPH_PROGRESS("Spherical MDS layout", 0, NULL);
+            for (igraph_int_t step_idx = 0; step_idx < num_iter; step_idx++) {
+                igraph_real_t step = VECTOR(landmark_etas)[step_idx];
+
+                IGRAPH_PROGRESS("Spherical MDS layout", 100.0 * step_idx / num_iter, NULL);
+
+                igraph_i_smds_compute_trig(&landmark_angles, &l_sin_theta, &l_cos_theta, &l_sin_phi, &l_cos_phi, l);
+
+                for (i = landmark_pairs - 1; i > 0; i--) {
+                    igraph_int_t swap_idx = RNG_INTEGER(0, i);
+                    igraph_int_t tmp1 = VECTOR(landmark_indices)[i * 2];
+                    igraph_int_t tmp2 = VECTOR(landmark_indices)[i * 2 + 1];
+                    VECTOR(landmark_indices)[i * 2] = VECTOR(landmark_indices)[swap_idx * 2];
+                    VECTOR(landmark_indices)[i * 2 + 1] = VECTOR(landmark_indices)[swap_idx * 2 + 1];
+                    VECTOR(landmark_indices)[swap_idx * 2] = tmp1;
+                    VECTOR(landmark_indices)[swap_idx * 2 + 1] = tmp2;
+                }
+
+                for (k = 0; k < landmark_pairs; k++) {
+                    IGRAPH_ALLOW_INTERRUPTION();
+
+                    igraph_int_t u = VECTOR(landmark_indices)[k * 2];
+                    igraph_int_t v = VECTOR(landmark_indices)[k * 2 + 1];
+
+                    igraph_real_t wc = (step > lr_cap) ? lr_cap : step;
+                    igraph_real_t target_d = MATRIX(d_sub, u, v);
+
+                    igraph_real_t st_u = VECTOR(l_sin_theta)[u], ct_u = VECTOR(l_cos_theta)[u];
+                    igraph_real_t sp_u = VECTOR(l_sin_phi)[u],   cp_u = VECTOR(l_cos_phi)[u];
+                    igraph_real_t st_v = VECTOR(l_sin_theta)[v], ct_v = VECTOR(l_cos_theta)[v];
+                    igraph_real_t sp_v = VECTOR(l_sin_phi)[v],   cp_v = VECTOR(l_cos_phi)[v];
+
+                    igraph_real_t cos_dp = cp_u * cp_v + sp_u * sp_v;
+                    igraph_real_t val = ct_u * ct_v + st_u * st_v * cos_dp;
+                    if (val > 1.0) val = 1.0;
+                    if (val < -1.0) val = -1.0;
+
+                    igraph_real_t delta = acos(val);
+                    igraph_real_t factor = 2.0 * (delta - target_d);
+
+                    igraph_real_t denom = sqrt(1.0 - val * val);
+                    if (denom < 1e-8) continue;
+
+                    igraph_real_t sin_dp = sp_u * cp_v - cp_u * sp_v;
+                    igraph_real_t inv_denom = 1.0 / denom;
+
+                    igraph_real_t dd_ti = (st_u * ct_v - ct_u * st_v * cos_dp) * inv_denom;
+                    igraph_real_t dd_pi = st_u * st_v * sin_dp * inv_denom;
+                    igraph_real_t dd_tj = (ct_u * st_v - st_u * ct_v * cos_dp) * inv_denom;
+
+                    igraph_real_t g = wc * factor;
+
+                    MATRIX(landmark_angles, u, 0) -= g * dd_ti;
+                    MATRIX(landmark_angles, u, 1) -= g * dd_pi;
+                    MATRIX(landmark_angles, v, 0) -= g * dd_tj;
+                    MATRIX(landmark_angles, v, 1) += g * dd_pi;
+                }
+
+                igraph_i_smds_compute_trig(&landmark_angles, &l_sin_theta, &l_cos_theta, &l_sin_phi, &l_cos_phi, l);
+                igraph_i_smds_update_cartesian(&res_sub, &l_sin_theta, &l_cos_theta, &l_sin_phi, &l_cos_phi, l);
+
+                for (i = 0; i < l; i++) {
+                    igraph_int_t node = VECTOR(perm)[i];
+                    MATRIX(*res, node, 0) = MATRIX(res_sub, i, 0);
+                    MATRIX(*res, node, 1) = MATRIX(res_sub, i, 1);
+                    MATRIX(*res, node, 2) = MATRIX(res_sub, i, 2);
+                }
+                IGRAPH_STEP(res, NULL);
+            }
+
+            igraph_i_smds_compute_trig(&landmark_angles, &l_sin_theta, &l_cos_theta, &l_sin_phi, &l_cos_phi, l);
+            igraph_i_smds_update_cartesian(&res_sub, &l_sin_theta, &l_cos_theta, &l_sin_phi, &l_cos_phi, l);
+
+            igraph_vector_destroy(&l_cos_phi); igraph_vector_destroy(&l_sin_phi);
+            igraph_vector_destroy(&l_cos_theta); igraph_vector_destroy(&l_sin_theta);
+            igraph_vector_destroy(&landmark_etas); igraph_vector_int_destroy(&landmark_indices);
+            igraph_matrix_destroy(&landmark_angles);
+            IGRAPH_FINALLY_CLEAN(7);
+        }
+
+        IGRAPH_PROGRESS("Spherical MDS layout", 50, NULL);
 
         IGRAPH_VECTOR_INIT_FINALLY(&row_means, l);
         IGRAPH_MATRIX_INIT_FINALLY(&Q, l, l);
@@ -471,22 +581,6 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         igraph_vector_int_fill(&landmark_map, -1);
         for (i = 0; i < l; i++) VECTOR(landmark_map)[VECTOR(perm)[i]] = i;
 
-        IGRAPH_CHECK(igraph_matrix_resize(res, no_of_nodes, 3));
-
-        IGRAPH_PROGRESS("Spherical MDS layout", 50, NULL);
-
-        /* Place landmark positions so the step handler sees intermediate state */
-        for (i = 0; i < l; i++) {
-            igraph_int_t node = VECTOR(perm)[i];
-            MATRIX(*res, node, 0) = MATRIX(res_sub, i, 0);
-            MATRIX(*res, node, 1) = MATRIX(res_sub, i, 1);
-            MATRIX(*res, node, 2) = MATRIX(res_sub, i, 2);
-        }
-        IGRAPH_STEP(res, NULL);
-
-        IGRAPH_PROGRESS("Spherical MDS layout", 80, NULL);
-
-        /* Highly parallel global reconstruction step */
         igraph_i_smds_gower_interpolate(res, &res_sub, &d_landmark, &x_1_s_inv, &q_vector, &landmark_map, no_of_nodes, l);
         IGRAPH_STEP(res, NULL);
         IGRAPH_PROGRESS("Spherical MDS layout", 100, NULL);
@@ -495,9 +589,9 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
         igraph_matrix_destroy(&S_inv); igraph_matrix_destroy(&S);
         igraph_vector_destroy(&q_vector); igraph_matrix_destroy(&Q);
         igraph_vector_destroy(&row_means); igraph_matrix_destroy(&res_sub);
-        igraph_matrix_destroy(&d_sub); igraph_destroy(&landmark_graph);
+        igraph_matrix_destroy(&d_sub);
         igraph_matrix_destroy(&d_landmark); igraph_vector_int_destroy(&perm);
-        IGRAPH_FINALLY_CLEAN(12);
+        IGRAPH_FINALLY_CLEAN(11);
 
         return IGRAPH_SUCCESS;
     }
