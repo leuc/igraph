@@ -69,19 +69,21 @@ static void igraph_i_smds_gower_center(const igraph_matrix_t *d_sub,
         igraph_real_t row_sum = 0.0;
         for (j = 0; j < l; j++) {
             igraph_real_t val = MATRIX(*d_sub, i, j);
-            row_sum += val * val;
+            igraph_real_t chord_sq = 2.0 * (1.0 - cos(val));
+            row_sum += chord_sq;
         }
         VECTOR(*row_means)[i] = row_sum / l;
         grand_sum += row_sum;
     }
-
+    
     igraph_real_t grand_mean = grand_sum / (l * l);
 
     #pragma omp parallel for private(j) default(none) shared(d_sub, row_means, Q, q_vector, grand_mean, l)
     for (i = 0; i < l; i++) {
         for (j = 0; j < l; j++) {
             igraph_real_t val = MATRIX(*d_sub, i, j);
-            igraph_real_t q_val = -0.5 * (val * val - VECTOR(*row_means)[i] - VECTOR(*row_means)[j] + grand_mean);
+            igraph_real_t chord_sq = 2.0 * (1.0 - cos(val));
+            igraph_real_t q_val = -0.5 * (chord_sq - VECTOR(*row_means)[i] - VECTOR(*row_means)[j] + grand_mean);
             MATRIX(*Q, i, j) = q_val;
             if (i == j) {
                 VECTOR(*q_vector)[i] = q_val;
@@ -112,7 +114,8 @@ static void igraph_i_smds_gower_interpolate(igraph_matrix_t *res,
             igraph_real_t x_v[3] = {0.0, 0.0, 0.0};
             for (igraph_int_t i = 0; i < l; i++) {
                 igraph_real_t d_vi = MATRIX(*d_landmark, i, v);
-                igraph_real_t a_vi = d_vi * d_vi;
+                igraph_real_t chord = 2.0 * sin(d_vi / 2.0);
+                igraph_real_t a_vi = chord * chord;
                 igraph_real_t diff = VECTOR(*q_vector)[i] - a_vi;
 
                 x_v[0] += diff * MATRIX(*x_1_s_inv, i, 0);
@@ -541,7 +544,7 @@ igraph_error_t igraph_layout_mds_spherical(const igraph_t *graph, igraph_matrix_
                     IGRAPH_ALLOW_INTERRUPTION();
                     sum += MATRIX(res_sub, k, i) * MATRIX(res_sub, k, j);
                 }
-                MATRIX(S, i, j) = sum / l;
+                MATRIX(S, i, j) = sum / (l - 1);
             }
         }
 
