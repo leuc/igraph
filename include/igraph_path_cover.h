@@ -29,6 +29,15 @@
 
 IGRAPH_BEGIN_C_DECLS
 
+/* This module is a port of the Minimum Path Cover (MPC) algorithms from
+ * https://github.com/algbio/PerformanceMPC (src/mpc/naive.cpp, antichain.cpp,
+ * cc.cpp), reimplemented on top of igraph's own flow and graph primitives.
+ * The underlying minimum-flow-with-lower-bounds reduction and the greedy
+ * initial solution follow Mäkinen, Tomescu, Kuosmanen, Paavilainen, Gagie &
+ * Chikhi, "Sparse Dynamic Programming on DAGs with Small Width", ACM
+ * Transactions on Algorithms 15(2):29, 2019 (Section 2); see the .c files
+ * for exact per-function references. */
+
 /**
  * \typedef igraph_mpc_reduction_t
  * \brief Initial feasible solution strategy for minimum path cover.

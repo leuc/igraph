@@ -52,6 +52,21 @@
  * Time complexity: O(|V|), where |V| is the total number of vertices
  * covered by \p cover.
  *
+ * </para><para>
+ * Ported from naive_chaincover_from_pathcover() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/cc.cpp. That a
+ * path cover is automatically a chain cover of the same size (and hence
+ * minimum) follows from the path/chain duality underlying Dilworth's
+ * theorem: every path is totally ordered by reachability, i.e. is itself a
+ * chain.
+ *
+ * </para><para>
+ * Reference:
+ *
+ * </para><para>
+ * Dilworth RP: A Decomposition Theorem for Partially Ordered Sets.
+ * Annals of Mathematics, Second Series, 51(1):161-166, 1950.
+ *
  * \sa \ref igraph_minimum_path_cover().
  */
 igraph_error_t igraph_minimum_chain_cover(
