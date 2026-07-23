@@ -59,6 +59,18 @@
  * Time complexity: O(|V|+|E|), where |V| and |E| are the number of
  * vertices and edges in \p flow_network.
  *
+ * </para><para>
+ * The two-phase residual-reachability extraction below is ported from
+ * maxantichain_from_minflow() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/antichain.cpp.
+ *
+ * </para><para>
+ * Reference:
+ *
+ * </para><para>
+ * Dilworth RP: A Decomposition Theorem for Partially Ordered Sets.
+ * Annals of Mathematics, Second Series, 51(1):161-166, 1950.
+ *
  * \sa \ref igraph_minimum_path_cover().
  */
 igraph_error_t igraph_maximum_antichain(

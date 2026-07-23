@@ -34,6 +34,17 @@
 /* Network construction                                                 */
 /* -------------------------------------------------------------------- */
 
+/* Standard MPC-to-minimum-flow reduction: split each vertex v into
+ * (v_in, v_out) with demand 1 on the (v_in, v_out) edge, keep original
+ * edges as (u_out, v_in), and attach a global source/sink. See Mäkinen,
+ * Tomescu, Kuosmanen, Paavilainen, Gagie & Chikhi, "Sparse Dynamic
+ * Programming on DAGs with Small Width", ACM TALG 15(2):29, 2019, Section
+ * 2, paragraph "The standard reduction from the minimum path cover problem
+ * to a minimum flow one...". Ported from naive_minflow_reduction() /
+ * greedy_minflow_reduction() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/naive.cpp,
+ * which construct this same network inline for each reduction; here it is
+ * factored out since the topology is reduction-independent. */
 igraph_error_t igraph_i_mpc_build_network(
         const igraph_t *graph, igraph_t *network,
         igraph_vector_int_t *demand,
@@ -118,6 +129,10 @@ igraph_error_t igraph_i_mpc_is_valid_minflow(
 /* Reductions: build an initial feasible flow                          */
 /* -------------------------------------------------------------------- */
 
+/* Trivial feasible flow: every vertex is its own one-vertex path, i.e. the
+ * initial path cover has width |V|. Ported from naive_minflow_reduction()
+ * in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/naive.cpp. */
 igraph_error_t igraph_i_mpc_naive_reduction(
         const igraph_t *graph, const igraph_vector_int_t *vertex_weights,
         igraph_vector_int_t *flow) {
@@ -137,9 +152,18 @@ igraph_error_t igraph_i_mpc_naive_reduction(
     return IGRAPH_SUCCESS;
 }
 
-/* Greedy longest-uncovered-chain heuristic. Only supports uniform (all-1)
- * vertex weights; the caller (igraph_minimum_path_cover) is responsible for
- * rejecting non-uniform weights before calling this function. */
+/* Greedy longest-uncovered-chain heuristic: repeatedly pick the path
+ * covering the most still-uncovered vertices via a topological-order DP
+ * (max_len[v] = 1{v uncovered} + max over out-neighbors u of max_len[u]),
+ * mark it covered, and repeat. This is the O(k log|V|)-width greedy
+ * set-cover algorithm and DP of Mäkinen, Tomescu, Kuosmanen, Paavilainen,
+ * Gagie & Chikhi, "Sparse Dynamic Programming on DAGs with Small Width",
+ * ACM TALG 15(2):29, 2019, Section 2, Lemma 2.1 and its proof. Ported from
+ * greedy_minflow_reduction() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/naive.cpp.
+ * Only supports uniform (all-1) vertex weights; the caller
+ * (igraph_minimum_path_cover) is responsible for rejecting non-uniform
+ * weights before calling this function. */
 igraph_error_t igraph_i_mpc_greedy_reduction(
         const igraph_t *graph, igraph_vector_int_t *flow) {
 
@@ -269,7 +293,15 @@ igraph_error_t igraph_i_mpc_greedy_reduction(
  * visited marks and the per-vertex edge cursors are reset at the start of
  * every augmenting-path search, since flow can both increase and decrease
  * across searches here (unlike igraph_i_mpc_recover_paths, where flow is
- * monotonically drained). */
+ * monotonically drained).
+ *
+ * Correctness (termination with a minimum flow once no more augmenting path
+ * exists) rests on the max-flow/min-cut argument of Ford & Fulkerson,
+ * "Maximal Flow Through a Network", Canadian Journal of Mathematics 8,
+ * 1956, Theorem 1 (the Minimal Cut Theorem), applied to the demand-residual
+ * graph -- matching PerformanceMPC's own citation for this routine (see its
+ * README, reference [2]). Ported from naive_minflow_solve() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/naive.cpp. */
 igraph_error_t igraph_i_mpc_solve_naive_dfs(
         const igraph_t *network, const igraph_vector_int_t *demand,
         igraph_int_t source, igraph_int_t sink, igraph_vector_int_t *flow) {
@@ -399,7 +431,18 @@ igraph_error_t igraph_i_mpc_solve_naive_dfs(
  * with capacity equal to the total flow leaving the source (a safe upper
  * bound for this instance). The resulting max-flow is translated back onto
  * the original flow: forward-tagged edges cancel flow, reverse-tagged
- * edges add it back. */
+ * edges add it back.
+ *
+ * This is the minimum-flow-to-maximum-flow reduction of Mäkinen, Tomescu,
+ * Kuosmanen, Paavilainen, Gagie & Chikhi, "Sparse Dynamic Programming on
+ * DAGs with Small Width", ACM TALG 15(2):29, 2019, Section 2: "(i) find a
+ * feasible flow f; (ii) transform this into a minimum feasible flow, by
+ * finding a maximum flow f' in G in which every e now has capacity
+ * f(e)-d(e). The final minimum flow solution is obtained as f(e)-f'(e)."
+ * Ported from minflow_maxflow_reduction() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/naive.cpp,
+ * but calling igraph_maxflow() directly instead of a hand-rolled
+ * Edmonds-Karp/Dinic backend. */
 igraph_error_t igraph_i_mpc_solve_maxflow_reduction(
         const igraph_t *network, const igraph_vector_int_t *demand,
         igraph_int_t source, igraph_int_t sink, igraph_vector_int_t *flow) {
@@ -501,7 +544,16 @@ igraph_error_t igraph_i_mpc_solve_maxflow_reduction(
  * flow values. So permanently skipping edges that are spent (flow == 0) or
  * that lead to an already-visited-this-pass vertex is correct, and gives
  * amortized O(total path length + |E|) time instead of the naive solver's
- * O(paths * (|V|+|E|)). */
+ * O(paths * (|V|+|E|)).
+ *
+ * The decomposition of a feasible flow into source-to-sink paths is
+ * folklore flow theory (a direct consequence of Ford & Fulkerson's flow
+ * conservation laws, "Maximal Flow Through a Network", Canadian Journal of
+ * Mathematics 8, 1956); the persistent-cursor optimization used here is
+ * ported from minflow_reduction_path_recover_faster() in
+ * https://github.com/algbio/PerformanceMPC/blob/main/src/mpc/naive.cpp
+ * (chosen over that file's plain and "_fast" variants, which it strictly
+ * dominates). */
 igraph_error_t igraph_i_mpc_recover_paths(
         const igraph_t *network, igraph_vector_int_t *flow,
         igraph_int_t source, igraph_int_t sink, igraph_int_t no_of_nodes,
@@ -680,6 +732,21 @@ igraph_error_t igraph_i_mpc_recover_paths(
  * for the greedy reduction, where w is the resulting width. The naive DFS
  * solver is also O((|V|+|E|) w); the max-flow reduction solver is bounded
  * by the complexity of \ref igraph_maxflow(), O(|V|^3).
+ *
+ * </para><para>
+ * This is a port of the Minimum Path Cover algorithms from
+ * https://github.com/algbio/PerformanceMPC (Cáceres, Grigorjew et al.); see
+ * the internal functions in path_cover.c for the exact literature reference
+ * backing each reduction/solver combination.
+ *
+ * </para><para>
+ * Reference:
+ *
+ * </para><para>
+ * Mäkinen V, Tomescu AI, Kuosmanen A, Paavilainen T, Gagie T, Chikhi R:
+ * Sparse Dynamic Programming on DAGs with Small Width.
+ * ACM Transactions on Algorithms 15(2):29, 2019.
+ * https://doi.org/10.1145/3301312
  *
  * \sa \ref igraph_maximum_antichain(), \ref igraph_minimum_chain_cover(),
  * \ref igraph_maxflow(), \ref igraph_is_dag().

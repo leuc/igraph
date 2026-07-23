@@ -27,7 +27,15 @@
 
 IGRAPH_BEGIN_C_DECLS
 
-/* Vertex-splitting layout of the minimum path cover flow network, built on
+/* Ported from https://github.com/algbio/PerformanceMPC (src/mpc/naive.cpp,
+ * antichain.cpp, cc.cpp). The vertex-splitting reduction below is the
+ * "standard reduction from the minimum path cover problem to a minimum flow
+ * one" of Mäkinen, Tomescu, Kuosmanen, Paavilainen, Gagie & Chikhi, "Sparse
+ * Dynamic Programming on DAGs with Small Width", ACM Transactions on
+ * Algorithms 15(2):29, 2019, Section 2; see path_cover.c for the reduction
+ * and solver implementations, each annotated with its exact source.
+ *
+ * Vertex-splitting layout of the minimum path cover flow network, built on
  * top of igraph_i_split_vertices() (src/flow/flow_conversion.c). For an
  * original vertex v in [0, n): the "output half" is v_out(v) = v and the
  * "input half" is v_in(v) = n + v, exactly as igraph_i_split_vertices()
