@@ -143,6 +143,7 @@ add_library(
   games/watts_strogatz.c
 
   centrality/betweenness.c
+  centrality/cd_index.c
   centrality/centrality_other.c
   centrality/centralization.c
   centrality/closeness.c
